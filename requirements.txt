@@ -2,6 +2,6 @@ fastapi
 uvicorn[standard]
 opencv-python-headless
 numpy
-supabase==2.3.4
-httpx<0.28.0
+supabase>=2.13.0
+httpx>=0.27.0
 pydantic
