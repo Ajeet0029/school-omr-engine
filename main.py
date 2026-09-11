@@ -3,18 +3,18 @@ from pydantic import BaseModel
 import urllib.request
 import cv2
 import numpy as np
-from pyzbar.pyzbar import decode
 from supabase import create_client
 import os
 
 app = FastAPI()
 
 # Supabase Credentials
-SUPABASE_URL = os.getenv("SUPABASE_URL", "यहाँ_अपना_SUPABASE_URL_डालें")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "यहाँ_अपनी_SUPABASE_SERVICE_ROLE_KEY_डालें")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://YOUR_PROJECT_ID.supabase.co")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "YOUR_SERVICE_ROLE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-ANSWER_KEY = {1: 1, 2: 1, 3: 0, 4: 1, 5: 0, 6: 2, 7: 0, 8: 1, 9: 0, 10: 1}
+# OpenCV का इन-बिल्ट QR डिटेक्टर (किसी बाहरी C-लाइब्रेरी की जरूरत नहीं)
+qr_detector = cv2.QRCodeDetector()
 
 class ScanRequest(BaseModel):
     image_url: str
@@ -26,22 +26,30 @@ def home():
 @app.post("/scan-omr")
 def scan_omr(data: ScanRequest):
     try:
+        # 1. Supabase Storage से इमेज डाउनलोड करना
         req = urllib.request.urlopen(data.image_url)
         arr = np.asarray(bytearray(req.read()), dtype=np.uint8)
-        img = cv2.imdecode(arr, -1)
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
-        qr_data = decode(gray)
-        if not qr_data:
-            raise HTTPException(status_code=400, detail="QR Code not found")
+        if img is None:
+            raise HTTPException(status_code=400, detail="Image could not be decoded")
 
-        payload = qr_data[0].data.decode("utf-8").split("|")
-        student_id, assignment_id, chapter_no = payload[0], payload[1], int(payload[2])
+        # 2. QR कोड पढ़ना (OpenCV इन-बिल्ट)
+        qr_text, _, _ = qr_detector.detectAndDecode(img)
+        if not qr_text:
+            raise HTTPException(status_code=400, detail="QR Code not found on sheet")
 
+        payload = qr_text.split("|")
+        student_id = payload[0]
+        assignment_id = payload[1]
+        chapter_no = int(payload[2])
+
+        # 3. स्कोर गणना (डिफ़ॉल्ट लॉजिक)
         score = 8
         total_marks = 10
         zone = "green" if score >= 8 else ("yellow" if score >= 5 else "red")
 
+        # 4. Supabase में रिजल्ट इन्सर्ट करना
         res = supabase.table("test_evaluations").insert({
             "student_id": student_id,
             "assignment_id": assignment_id,
