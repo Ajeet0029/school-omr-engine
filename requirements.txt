@@ -1,6 +1,7 @@
-fastapi==0.110.0
-uvicorn==0.28.0
-opencv-python-headless==4.9.0.80
-numpy==1.26.4
-supabase==2.4.0
-pydantic==2.6.4
+fastapi
+uvicorn[standard]
+opencv-python-headless
+numpy
+supabase==2.3.4
+httpx<0.28.0
+pydantic
