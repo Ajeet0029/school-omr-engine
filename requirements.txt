@@ -5,3 +5,4 @@ numpy
 supabase>=2.13.0
 httpx>=0.27.0
 pydantic
+reportlab
