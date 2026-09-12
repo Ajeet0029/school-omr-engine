@@ -8,3 +8,4 @@ pydantic
 reportlab
 qrcode
 pillow
+python-multipart
