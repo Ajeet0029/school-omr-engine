@@ -8,11 +8,11 @@ from supabase import create_client
 import os
 import io
 import json
+import qrcode
 
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
-from reportlab.graphics.barcode import qr
-from reportlab.graphics.shapes import Drawing
+from reportlab.lib.utils import ImageReader
 
 app = FastAPI(title="School OMR Engine API")
 
@@ -71,12 +71,13 @@ def generate_omr_pdf(payload: dict):
         p.setFont("Helvetica", 9)
         p.drawString(50, height - 50, f"Class: {class_name}-{section}  |  Subject: {subject}  |  Max Marks: 10")
 
-        # Master QR Code (Top Right Corner)
+        # Master QR Code (using standard qrcode library)
         qr_payload = f"{assignment_id}|{class_name}|{section}|{subject}"
-        qr_code = qr.QrCodeWidget(qr_payload)
-        d = Drawing(45, 45)
-        d.add(qr_code)
-        qr.renderPDF.draw(d, p, width - 75, height - 65)
+        qr_img = qrcode.make(qr_payload)
+        qr_buffer = io.BytesIO()
+        qr_img.save(qr_buffer, format="PNG")
+        qr_buffer.seek(0)
+        p.drawImage(ImageReader(qr_buffer), width - 75, height - 68, width=48, height=48)
 
         # Separator Line
         p.setLineWidth(0.8)
@@ -160,7 +161,6 @@ def generate_omr_pdf(payload: dict):
 @app.post("/scan-omr")
 def scan_omr(data: ScanRequest):
     try:
-        # Download and read image
         req = urllib.request.urlopen(data.image_url)
         arr = np.asarray(bytearray(req.read()), dtype=np.uint8)
         img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -168,38 +168,31 @@ def scan_omr(data: ScanRequest):
         if img is None:
             raise HTTPException(status_code=400, detail="Image could not be decoded")
 
-        # Decode Master QR Code
         qr_text, _, _ = qr_detector.detectAndDecode(img)
         if not qr_text:
             raise HTTPException(status_code=400, detail="Master QR Code not found on the sheet")
 
-        # Format: assignment_id|class_name|section|subject
         parts = qr_text.split("|")
         assignment_id = parts[0] if len(parts) > 0 else "UNKNOWN"
         class_name = parts[1] if len(parts) > 1 else ""
         section = parts[2] if len(parts) > 2 else ""
         subject = parts[3] if len(parts) > 3 else ""
 
-        # OMR Bubble detection values
         detected_roll_no = 1
         student_answers = ['A', 'B', 'C', 'D', 'A', 'B', 'C', 'D', 'A', 'B']
 
-        # Fetch Answer Key from Supabase
         asg = supabase.table("assignments").select("answer_key, total_marks").eq("id", assignment_id).execute()
         correct_key = asg.data[0].get("answer_key", student_answers) if asg.data else student_answers
         total_marks = asg.data[0].get("total_marks", 10) if asg.data else 10
 
-        # Calculate Score
         score = sum(1 for s, c in zip(student_answers, correct_key) if s == c)
         percentage = (score / total_marks) * 100 if total_marks else 0
         zone = "green" if percentage >= 75 else ("yellow" if percentage >= 40 else "red")
 
-        # Fetch Student Name
         st_res = supabase.table("students").select("id, name").eq("class", class_name).eq("section", section).eq("roll_no", detected_roll_no).execute()
         student_id = st_res.data[0]["id"] if st_res.data else None
         student_name = st_res.data[0]["name"] if st_res.data else f"Roll {detected_roll_no}"
 
-        # Upsert Result in test_evaluations
         supabase.table("test_evaluations").upsert({
             "assignment_id": assignment_id,
             "class_name": class_name,
