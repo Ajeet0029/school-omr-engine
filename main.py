@@ -85,25 +85,14 @@ def generate_omr_pdf(payload: dict):
         p.rect(20, 20, anchor_size, anchor_size, fill=1) # Bottom-Left
         p.rect(width - 20 - anchor_size, 20, anchor_size, anchor_size, fill=1) # Bottom-Right
 
-        # Header Details
-        p.setFont("Helvetica-Bold", 13)
+        # ---------------- TOP HEADER ----------------
+        p.setFont("Helvetica-Bold", 14)
         p.drawString(50, height - 35, str(school_name))
         p.setFont("Helvetica", 9)
-        p.drawString(50, height - 50, f"Class: {class_name}-{section}  |  Subject: {subject}  |  Max Marks: 10")
+        p.drawString(50, height - 50, "Instructions: Fill circles completely using Blue or Black ballpoint pen.")
+        p.line(45, height - 58, width - 45, height - 58)
 
-        # Master QR Code
-        qr_payload = f"{assignment_id}|{class_name}|{section}|{subject}"
-        qr_img = qrcode.make(qr_payload)
-        qr_buffer = io.BytesIO()
-        qr_img.save(qr_buffer, format="PNG")
-        qr_buffer.seek(0)
-        p.drawImage(ImageReader(qr_buffer), width - 75, height - 68, width=48, height=48)
-
-        # Separator Line
-        p.setLineWidth(0.8)
-        p.line(45, height - 60, width - 80, height - 60)
-
-        # 10 Questions Grid (2 Columns)
+        # ---------------- 10 QUESTIONS GRID (TOP HALF) ----------------
         y_pos = height - 80
         col1_x = 50
         col2_x = 310
@@ -127,43 +116,60 @@ def generate_omr_pdf(payload: dict):
             p.drawString(col_x + 8, y_pos - 22, f"C) {str(opt_c)[:14]}   D) {str(opt_d)[:14]}")
             y_pos -= 42
 
-        # Bottom Separator
+        # ---------------- BOTTOM OMR EVALUATION STRIP ----------------
+        # विभाजक मुख्य रेखा
         p.setLineWidth(1.2)
         p.line(30, 205, width - 30, 205)
 
-        # Roll Number Bubbles
+        # 1. टेस्ट डिटेल्स व QR कोड (बाएँ भाग में)
         p.setFont("Helvetica-Bold", 9)
-        p.drawString(50, 190, "ROLL NUMBER (Fill 2 Digits)")
+        p.drawString(45, 190, "TEST DETAILS")
+        p.setFont("Helvetica", 8)
+        p.drawString(45, 175, f"Class: {class_name}-{section}")
+        p.drawString(45, 162, f"Subject: {subject}")
+        p.drawString(45, 149, "Max Marks: 10")
+
+        # QR कोड (QR Payload: assignment_id|class_name|section|subject)
+        qr_payload = f"{assignment_id}|{class_name}|{section}|{subject}"
+        qr_img = qrcode.make(qr_payload)
+        qr_buffer = io.BytesIO()
+        qr_img.save(qr_buffer, format="PNG")
+        qr_buffer.seek(0)
+        p.drawImage(ImageReader(qr_buffer), 45, 80, width=58, height=58)
+
+        # 2. रोल नंबर OMR ग्रिड (मध्य भाग में)
+        p.setFont("Helvetica-Bold", 8.5)
+        p.drawString(125, 190, "ROLL NO (2 Digits)")
         for col_idx in range(2):
-            bx = 55 + (col_idx * 30)
+            bx = 135 + (col_idx * 24)
             for num in range(10):
-                by = 170 - (num * 12)
-                p.circle(bx, by, 4.5, stroke=1, fill=0)
+                by = 172 - (num * 11)
+                p.circle(bx, by, 4, stroke=1, fill=0)
                 p.setFont("Helvetica", 5.5)
                 p.drawCentredString(bx, by - 2, str(num))
 
-        # Answer OMR Strip
-        p.setFont("Helvetica-Bold", 9)
-        p.drawString(200, 190, "ANSWER STRIP (Mark One Option Only)")
+        # 3. उत्तर बबल्स स्ट्रिप (Q1 से Q10) (दाएँ भाग में)
+        p.setFont("Helvetica-Bold", 8.5)
+        p.drawString(210, 190, "ANSWER STRIP (Mark One Option Only)")
+
         for q_no in range(1, 11):
-            strip_col = 200 if q_no <= 5 else 380
+            strip_col = 210 if q_no <= 5 else 380
             row_idx = (q_no - 1) % 5
-            oy = 170 - (row_idx * 22)
+            oy = 172 - (row_idx * 21)
 
             p.setFont("Helvetica-Bold", 7.5)
             p.drawString(strip_col, oy, f"Q{q_no:02d}")
 
             opts = ['A', 'B', 'C', 'D']
             for opt_idx, opt_char in enumerate(opts):
-                circle_x = strip_col + 28 + (opt_idx * 20)
-                p.circle(circle_x, oy + 2, 5.5, stroke=1, fill=0)
-                p.setFont("Helvetica", 6)
+                circle_x = strip_col + 25 + (opt_idx * 18)
+                p.circle(circle_x, oy + 2, 5, stroke=1, fill=0)
+                p.setFont("Helvetica", 5.5)
                 p.drawCentredString(circle_x, oy, opt_char)
 
         p.showPage()
         p.save()
 
-        # Render का सीधा पब्लिक डाउनलोड लिंक
         direct_pdf_url = f"https://school-omr-engine.onrender.com/download-pdf/{filename}"
 
         return {
@@ -174,6 +180,7 @@ def generate_omr_pdf(payload: dict):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 # ==========================================
 # 2. OMR SCANNING & AUTO-MAPPING ENGINE
