@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import cv2
@@ -9,7 +9,7 @@ import io
 import json
 import qrcode
 import uuid
-import httpx
+from datetime import datetime
 
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
@@ -28,14 +28,11 @@ qr_detector = cv2.QRCodeDetector()
 PDF_DIR = "/tmp/omr_sheets"
 os.makedirs(PDF_DIR, exist_ok=True)
 
-class ScanRequest(BaseModel):
-    image_url: str
-
 @app.get("/")
 def home():
     return {"status": "OMR Cloud Engine is running perfectly!"}
 
-# डायरेक्ट PDF डाउनलोड URL एंडपॉइंट
+# डायरेक्ट PDF डाउनलोड URL
 @app.get("/download-pdf/{filename}")
 def download_pdf(filename: str):
     file_path = os.path.join(PDF_DIR, filename)
@@ -60,6 +57,9 @@ def generate_omr_pdf(payload: dict):
         section = payload.get("section", "A")
         assignment_id = str(payload.get("assignment_id", "ASG-101"))
         
+        # आज की तारीख (Format: 12-Sep-2026)
+        print_date = payload.get("exam_date") or datetime.now().strftime("%d-%b-%Y")
+        
         raw_questions = payload.get("questions", [])
         if isinstance(raw_questions, str):
             try:
@@ -80,19 +80,19 @@ def generate_omr_pdf(payload: dict):
         # 4 Anchor Markers (18x18 pt)
         anchor_size = 18
         p.setFillColorRGB(0, 0, 0)
-        p.rect(20, height - 20 - anchor_size, anchor_size, anchor_size, fill=1)
-        p.rect(width - 20 - anchor_size, height - 20 - anchor_size, anchor_size, anchor_size, fill=1)
-        p.rect(20, 20, anchor_size, anchor_size, fill=1)
-        p.rect(width - 20 - anchor_size, 20, anchor_size, anchor_size, fill=1)
+        p.rect(20, height - 20 - anchor_size, anchor_size, anchor_size, fill=1) # Top-Left
+        p.rect(width - 20 - anchor_size, height - 20 - anchor_size, anchor_size, anchor_size, fill=1) # Top-Right
+        p.rect(20, 20, anchor_size, anchor_size, fill=1) # Bottom-Left
+        p.rect(width - 20 - anchor_size, 20, anchor_size, anchor_size, fill=1) # Bottom-Right
 
-        # Top Header
+        # ---------------- TOP HEADER ----------------
         p.setFont("Helvetica-Bold", 14)
         p.drawString(50, height - 35, str(school_name))
         p.setFont("Helvetica", 9)
         p.drawString(50, height - 50, "Instructions: Fill circles completely using Blue or Black ballpoint pen.")
         p.line(45, height - 58, width - 45, height - 58)
 
-        # 10 Questions Grid
+        # ---------------- 10 QUESTIONS GRID (TOP HALF) ----------------
         y_pos = height - 80
         col1_x = 50
         col2_x = 310
@@ -116,29 +116,31 @@ def generate_omr_pdf(payload: dict):
             p.drawString(col_x + 8, y_pos - 22, f"C) {str(opt_c)[:14]}   D) {str(opt_d)[:14]}")
             y_pos -= 42
 
-        # Bottom OMR Strip Separator
+        # ---------------- BOTTOM OMR EVALUATION STRIP ----------------
+        # मुख्य विभाजक रेखा
         p.setLineWidth(1.2)
         p.line(30, 205, width - 30, 205)
 
-        # Test Details
+        # 1. टेस्ट डिटेल्स, प्रिंट डेट और QR कोड (बाएँ भाग में)
         p.setFont("Helvetica-Bold", 9)
-        p.drawString(45, 190, "TEST DETAILS")
+        p.drawString(45, 192, "TEST DETAILS")
         p.setFont("Helvetica", 8)
-        p.drawString(45, 175, f"Class: {class_name}-{section}")
-        p.drawString(45, 162, f"Subject: {subject}")
-        p.drawString(45, 149, "Max Marks: 10")
+        p.drawString(45, 178, f"Class: {class_name}-{section}")
+        p.drawString(45, 166, f"Subject: {subject}")
+        p.drawString(45, 154, f"Date: {print_date}")
+        p.drawString(45, 142, "Max Marks: 10")
 
-        # QR Code
-        qr_payload = f"{assignment_id}|{class_name}|{section}|{subject}"
+        # QR कोड (Payload में date भी शामिल है)
+        qr_payload = f"{assignment_id}|{class_name}|{section}|{subject}|{print_date}"
         qr_img = qrcode.make(qr_payload)
         qr_buffer = io.BytesIO()
         qr_img.save(qr_buffer, format="PNG")
         qr_buffer.seek(0)
-        p.drawImage(ImageReader(qr_buffer), 45, 80, width=58, height=58)
+        p.drawImage(ImageReader(qr_buffer), 45, 76, width=56, height=56)
 
-        # Roll Number Bubbles
+        # 2. रोल नंबर OMR ग्रिड (मध्य भाग में)
         p.setFont("Helvetica-Bold", 8.5)
-        p.drawString(125, 190, "ROLL NO (2 Digits)")
+        p.drawString(125, 192, "ROLL NO (2 Digits)")
         for col_idx in range(2):
             bx = 135 + (col_idx * 24)
             for num in range(10):
@@ -147,9 +149,9 @@ def generate_omr_pdf(payload: dict):
                 p.setFont("Helvetica", 5.5)
                 p.drawCentredString(bx, by - 2, str(num))
 
-        # Answer Strip (Q1 - Q10)
+        # 3. उत्तर बबल्स स्ट्रिप (Q1 से Q10) (दाएँ भाग में)
         p.setFont("Helvetica-Bold", 8.5)
-        p.drawString(210, 190, "ANSWER STRIP (Mark One Option Only)")
+        p.drawString(210, 192, "ANSWER STRIP (Mark One Option Only)")
 
         for q_no in range(1, 11):
             strip_col = 210 if q_no <= 5 else 380
@@ -182,29 +184,21 @@ def generate_omr_pdf(payload: dict):
 
 
 # ==========================================
-# 2. OMR SCANNING & AUTO-MAPPING ENGINE
+# 2. OMR SCANNING (फ़ाइल अपलोड सपोर्ट)
 # ==========================================
-@app.post("/scan-omr")
-def scan_omr(data: ScanRequest):
+@app.post("/scan-omr-file")
+async def scan_omr_file(file: UploadFile = File(...)):
     try:
-        # httpx का उपयोग करके 10 सेकंड के टाइमआउट के साथ इमेज डाउनलोड
-        headers = {"User-Agent": "Mozilla/5.0"}
-        with httpx.Client(timeout=15.0, headers=headers) as client:
-            resp = client.get(data.image_url)
-            if resp.status_code != 200:
-                raise HTTPException(status_code=400, detail=f"Image fetch failed with status {resp.status_code}")
-            img_bytes = resp.content
-
-        arr = np.frombuffer(img_bytes, dtype=np.uint8)
+        contents = await file.read()
+        arr = np.frombuffer(contents, dtype=np.uint8)
         img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
         if img is None:
-            raise HTTPException(status_code=400, detail="Image file corrupted or invalid format")
+            raise HTTPException(status_code=400, detail="Image file corrupted or invalid")
 
         # QR कोड स्कैनिंग
         qr_text, _, _ = qr_detector.detectAndDecode(img)
         
-        # QR कोड न मिलने पर भी क्रैश न हो, सुरक्षित डिफ़ॉल्ट हैंडलिंग
         if qr_text and "|" in qr_text:
             parts = qr_text.split("|")
             assignment_id = parts[0]
@@ -220,7 +214,6 @@ def scan_omr(data: ScanRequest):
         detected_roll_no = 1
         student_answers = ['A', 'B', 'C', 'D', 'A', 'B', 'C', 'D', 'A', 'B']
 
-        # Supabase से आंसर-की फेच करना
         correct_key = student_answers
         total_marks = 10
         try:
@@ -235,7 +228,6 @@ def scan_omr(data: ScanRequest):
         percentage = (score / total_marks) * 100 if total_marks else 0
         zone = "green" if percentage >= 75 else ("yellow" if percentage >= 40 else "red")
 
-        # छात्र का विवरण फेच करना
         student_id = None
         student_name = f"Student Roll {detected_roll_no}"
         try:
@@ -246,7 +238,6 @@ def scan_omr(data: ScanRequest):
         except Exception:
             pass
 
-        # रिजल्ट सेव करना
         try:
             supabase.table("test_evaluations").upsert({
                 "assignment_id": assignment_id,
