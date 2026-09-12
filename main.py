@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import urllib.request
 import cv2
@@ -17,11 +17,16 @@ from reportlab.lib.utils import ImageReader
 
 app = FastAPI(title="School OMR Engine API")
 
+# Supabase Credentials
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 qr_detector = cv2.QRCodeDetector()
+
+# PDF सेव करने के लिए फ़ोल्डर
+PDF_DIR = "/tmp/omr_sheets"
+os.makedirs(PDF_DIR, exist_ok=True)
 
 class ScanRequest(BaseModel):
     image_url: str
@@ -30,8 +35,21 @@ class ScanRequest(BaseModel):
 def home():
     return {"status": "OMR Cloud Engine is running perfectly!"}
 
+# डायरेक्ट PDF डाउनलोड URL एंडपॉइंट
+@app.get("/download-pdf/{filename}")
+def download_pdf(filename: str):
+    file_path = os.path.join(PDF_DIR, filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(
+        path=file_path, 
+        media_type="application/pdf", 
+        filename=filename,
+        content_disposition_type="inline"
+    )
+
 # ==========================================
-# 1. A4 OMR PRINTABLE SHEET GENERATOR (DIRECT URL)
+# 1. A4 OMR PRINTABLE SHEET GENERATOR
 # ==========================================
 @app.post("/generate-omr-pdf")
 def generate_omr_pdf(payload: dict):
@@ -53,17 +71,19 @@ def generate_omr_pdf(payload: dict):
         else:
             questions = []
 
-        buffer = io.BytesIO()
-        p = canvas.Canvas(buffer, pagesize=A4)
+        filename = f"omr_{assignment_id}_{uuid.uuid4().hex[:6]}.pdf"
+        file_path = os.path.join(PDF_DIR, filename)
+
+        p = canvas.Canvas(file_path, pagesize=A4)
         width, height = A4
 
         # 4 Anchor Markers (18x18 pt)
         anchor_size = 18
         p.setFillColorRGB(0, 0, 0)
-        p.rect(20, height - 20 - anchor_size, anchor_size, anchor_size, fill=1)
-        p.rect(width - 20 - anchor_size, height - 20 - anchor_size, anchor_size, anchor_size, fill=1)
-        p.rect(20, 20, anchor_size, anchor_size, fill=1)
-        p.rect(width - 20 - anchor_size, 20, anchor_size, anchor_size, fill=1)
+        p.rect(20, height - 20 - anchor_size, anchor_size, anchor_size, fill=1) # Top-Left
+        p.rect(width - 20 - anchor_size, height - 20 - anchor_size, anchor_size, anchor_size, fill=1) # Top-Right
+        p.rect(20, 20, anchor_size, anchor_size, fill=1) # Bottom-Left
+        p.rect(width - 20 - anchor_size, 20, anchor_size, anchor_size, fill=1) # Bottom-Right
 
         # Header Details
         p.setFont("Helvetica-Bold", 13)
@@ -142,21 +162,13 @@ def generate_omr_pdf(payload: dict):
 
         p.showPage()
         p.save()
-        pdf_bytes = buffer.getvalue()
 
-        # Supabase Storage में सीधे अपलोड करें ताकि कभी Corrupt न हो
-        filename = f"omr_{assignment_id}_{uuid.uuid4().hex[:6]}.pdf"
-        storage_res = supabase.storage.from_("omr-sheets").upload(
-            file=pdf_bytes,
-            path=filename,
-            file_options={"content-type": "application/pdf"}
-        )
-        
-        pdf_public_url = f"{SUPABASE_URL}/storage/v1/object/public/omr-sheets/{filename}"
+        # Render का सीधा पब्लिक डाउनलोड लिंक
+        direct_pdf_url = f"https://school-omr-engine.onrender.com/download-pdf/{filename}"
 
         return {
             "success": True,
-            "pdf_url": pdf_public_url,
+            "pdf_url": direct_pdf_url,
             "filename": filename
         }
 
