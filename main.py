@@ -9,6 +9,7 @@ import os
 import io
 import json
 import qrcode
+import uuid
 
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
@@ -16,7 +17,6 @@ from reportlab.lib.utils import ImageReader
 
 app = FastAPI(title="School OMR Engine API")
 
-# Supabase Credentials
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -31,7 +31,7 @@ def home():
     return {"status": "OMR Cloud Engine is running perfectly!"}
 
 # ==========================================
-# 1. A4 OMR PRINTABLE SHEET GENERATOR
+# 1. A4 OMR PRINTABLE SHEET GENERATOR (DIRECT URL)
 # ==========================================
 @app.post("/generate-omr-pdf")
 def generate_omr_pdf(payload: dict):
@@ -57,13 +57,13 @@ def generate_omr_pdf(payload: dict):
         p = canvas.Canvas(buffer, pagesize=A4)
         width, height = A4
 
-        # 4 Anchor Markers (Fiducial Alignment Boxes - 18x18 pt)
+        # 4 Anchor Markers (18x18 pt)
         anchor_size = 18
         p.setFillColorRGB(0, 0, 0)
-        p.rect(20, height - 20 - anchor_size, anchor_size, anchor_size, fill=1) # Top-Left
-        p.rect(width - 20 - anchor_size, height - 20 - anchor_size, anchor_size, anchor_size, fill=1) # Top-Right
-        p.rect(20, 20, anchor_size, anchor_size, fill=1) # Bottom-Left
-        p.rect(width - 20 - anchor_size, 20, anchor_size, anchor_size, fill=1) # Bottom-Right
+        p.rect(20, height - 20 - anchor_size, anchor_size, anchor_size, fill=1)
+        p.rect(width - 20 - anchor_size, height - 20 - anchor_size, anchor_size, anchor_size, fill=1)
+        p.rect(20, 20, anchor_size, anchor_size, fill=1)
+        p.rect(width - 20 - anchor_size, 20, anchor_size, anchor_size, fill=1)
 
         # Header Details
         p.setFont("Helvetica-Bold", 13)
@@ -71,7 +71,7 @@ def generate_omr_pdf(payload: dict):
         p.setFont("Helvetica", 9)
         p.drawString(50, height - 50, f"Class: {class_name}-{section}  |  Subject: {subject}  |  Max Marks: 10")
 
-        # Master QR Code (using standard qrcode library)
+        # Master QR Code
         qr_payload = f"{assignment_id}|{class_name}|{section}|{subject}"
         qr_img = qrcode.make(qr_payload)
         qr_buffer = io.BytesIO()
@@ -83,7 +83,7 @@ def generate_omr_pdf(payload: dict):
         p.setLineWidth(0.8)
         p.line(45, height - 60, width - 80, height - 60)
 
-        # 10 Questions Grid (2 Columns: Q1-Q5 Left, Q6-Q10 Right)
+        # 10 Questions Grid (2 Columns)
         y_pos = height - 80
         col1_x = 50
         col2_x = 310
@@ -107,14 +107,13 @@ def generate_omr_pdf(payload: dict):
             p.drawString(col_x + 8, y_pos - 22, f"C) {str(opt_c)[:14]}   D) {str(opt_d)[:14]}")
             y_pos -= 42
 
-        # Bottom OMR Strip Separator
+        # Bottom Separator
         p.setLineWidth(1.2)
         p.line(30, 205, width - 30, 205)
 
-        # Student Details & Roll No Bubbles (Left Strip)
+        # Roll Number Bubbles
         p.setFont("Helvetica-Bold", 9)
         p.drawString(50, 190, "ROLL NUMBER (Fill 2 Digits)")
-        
         for col_idx in range(2):
             bx = 55 + (col_idx * 30)
             for num in range(10):
@@ -123,10 +122,9 @@ def generate_omr_pdf(payload: dict):
                 p.setFont("Helvetica", 5.5)
                 p.drawCentredString(bx, by - 2, str(num))
 
-        # Answer OMR Strip (Right Strip: Q1-Q10)
+        # Answer OMR Strip
         p.setFont("Helvetica-Bold", 9)
         p.drawString(200, 190, "ANSWER STRIP (Mark One Option Only)")
-
         for q_no in range(1, 11):
             strip_col = 200 if q_no <= 5 else 380
             row_idx = (q_no - 1) % 5
@@ -144,16 +142,26 @@ def generate_omr_pdf(payload: dict):
 
         p.showPage()
         p.save()
-        buffer.seek(0)
+        pdf_bytes = buffer.getvalue()
 
-        return Response(
-            content=buffer.getvalue(),
-            media_type="application/pdf",
-            headers={"Content-Disposition": f"attachment; filename=omr_{assignment_id}.pdf"}
+        # Supabase Storage में सीधे अपलोड करें ताकि कभी Corrupt न हो
+        filename = f"omr_{assignment_id}_{uuid.uuid4().hex[:6]}.pdf"
+        storage_res = supabase.storage.from_("omr-sheets").upload(
+            file=pdf_bytes,
+            path=filename,
+            file_options={"content-type": "application/pdf"}
         )
+        
+        pdf_public_url = f"{SUPABASE_URL}/storage/v1/object/public/omr-sheets/{filename}"
+
+        return {
+            "success": True,
+            "pdf_url": pdf_public_url,
+            "filename": filename
+        }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 # ==========================================
 # 2. OMR SCANNING & AUTO-MAPPING ENGINE
