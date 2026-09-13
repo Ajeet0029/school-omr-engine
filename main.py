@@ -9,6 +9,7 @@ import io
 import json
 import qrcode
 import uuid
+import urllib.request
 from datetime import datetime
 
 from reportlab.lib.pagesizes import A4
@@ -269,4 +270,27 @@ async def scan_omr_file(file: UploadFile = File(...)):
         raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# --- Supabase Image URL के ज़रिए OMR स्कैन करने का नया एंडपॉइंट ---
+class OMRUrlRequest(BaseModel):
+    image_url: str
+
+@app.post("/scan-omr")
+async def scan_omr(request_data: OMRUrlRequest):
+    if not request_data.image_url:
+        raise HTTPException(status_code=400, detail="image_url is required")
+    
+    try:
+        req = urllib.request.Request(
+            request_data.image_url, 
+            headers={'User-Agent': 'Mozilla/5.0'}
+        )
+        with urllib.request.urlopen(req) as response:
+            image_bytes = response.read()
+            
+        file_obj = io.BytesIO(image_bytes)
+        upload_file = UploadFile(filename="sheet.jpg", file=file_obj)
+        return await scan_omr_file(upload_file)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error downloading or processing image: {str(e)}")
 
