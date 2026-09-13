@@ -277,8 +277,8 @@ async def scan_omr_file(file: UploadFile = File(...)):
 
 
 
-
 import traceback
+import fitz  # PyMuPDF
 
 class OMRUrlRequest(BaseModel):
     image_url: str
@@ -295,24 +295,33 @@ async def scan_omr(request_data: OMRUrlRequest):
             headers={'User-Agent': 'Mozilla/5.0'}
         )
         with urllib.request.urlopen(req) as response:
-            image_bytes = response.read()
+            file_bytes = response.read()
 
-        # इमेज बाइट्स से सीधे OpenCV इमेज बनाएँ
+        # जाँचें कि क्या फ़ाइल PDF है (PDF फ़ाइल हमेशा %PDF से शुरू होती है)
+        if file_bytes.startswith(b"%PDF"):
+            # PDF का पहला पेज इमेज में बदलें
+            doc = fitz.open(stream=file_bytes, filetype="pdf")
+            page = doc.load_page(0)
+            pix = page.get_pixmap(dpi=200)  # साफ़ स्कैन के लिए 200 DPI
+            image_bytes = pix.tobytes("jpg")
+        else:
+            image_bytes = file_bytes
+
+        # इमेज वैलिडेशन
         nparr = np.frombuffer(image_bytes, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         if img is None:
-            raise ValueError("Downloaded file is not a valid image")
+            raise ValueError("File could not be decoded into a valid image")
 
-        # बाइट्स को UploadFile जैसा फ़ाइल ऑब्जेक्ट बनाएँ
         file_obj = io.BytesIO(image_bytes)
         upload_file = UploadFile(file=file_obj, filename="omr_sheet.jpg")
         
-        # आपके फ़ंक्शन को चलाएँ
         return await scan_omr_file(upload_file)
 
     except Exception as e:
-        # असली एरर रेंडर लॉग्स में साफ़ दिखेगा
         print("--- OMR SCAN ERROR TRACEBACK ---")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
 
