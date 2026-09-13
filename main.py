@@ -302,8 +302,8 @@ async def scan_omr(request_data: OMRUrlRequest):
             # PDF का पहला पेज इमेज में बदलें
             doc = fitz.open(stream=file_bytes, filetype="pdf")
             page = doc.load_page(0)
-            pix = page.get_pixmap(dpi=200)  # साफ़ स्कैन के लिए 200 DPI
-            image_bytes = pix.tobytes("jpg")
+            pix = page.get_pixmap(dpi=150)  # साफ़ स्कैन के लिए 200 DPI
+            image_bytes = pix.tobytes("png")
         else:
             image_bytes = file_bytes
 
