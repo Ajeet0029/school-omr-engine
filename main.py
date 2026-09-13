@@ -283,6 +283,8 @@ import fitz  # PyMuPDF
 class OMRUrlRequest(BaseModel):
     image_url: str
 
+
+
 @app.post("/scan-omr")
 async def scan_omr(request_data: OMRUrlRequest):
     print("Received URL:", request_data.image_url)
@@ -297,23 +299,28 @@ async def scan_omr(request_data: OMRUrlRequest):
         with urllib.request.urlopen(req) as response:
             file_bytes = response.read()
 
-        # जाँचें कि क्या फ़ाइल PDF है (PDF फ़ाइल हमेशा %PDF से शुरू होती है)
+        # 1. यदि फ़ाइल PDF है: सीधे Pixmap से NumPy ऐरे बनाएँ (डिकोडिंग कभी फ़ेल नहीं होगी)
         if file_bytes.startswith(b"%PDF"):
-            # PDF का पहला पेज इमेज में बदलें
             doc = fitz.open(stream=file_bytes, filetype="pdf")
             page = doc.load_page(0)
-            pix = page.get_pixmap(dpi=150)  # साफ़ स्कैन के लिए 200 DPI
-            image_bytes = pix.tobytes("png")
+            pix = page.get_pixmap(dpi=150, colorspace=fitz.csRGB)
+            
+            # Pixmap को सीधे OpenCV (BGR) फॉर्मेट में बदलें
+            img = np.frombuffer(pix.samples, dtype=np.uint8).reshape((pix.h, pix.w, 3))
+            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+            
+            # इसे वापस JPG बाइट्स में एनकोड करें ताकि UploadFile को मिल सके
+            _, enc = cv2.imencode(".jpg", img)
+            final_bytes = enc.tobytes()
         else:
-            image_bytes = file_bytes
+            # 2. यदि फ़ाइल पहले से ही सामान्य इमेज (JPG/PNG) है
+            nparr = np.frombuffer(file_bytes, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if img is None:
+                raise ValueError("URL did not return a valid PDF or Image file")
+            final_bytes = file_bytes
 
-        # इमेज वैलिडेशन
-        nparr = np.frombuffer(image_bytes, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        if img is None:
-            raise ValueError("File could not be decoded into a valid image")
-
-        file_obj = io.BytesIO(image_bytes)
+        file_obj = io.BytesIO(final_bytes)
         upload_file = UploadFile(file=file_obj, filename="omr_sheet.jpg")
         
         return await scan_omr_file(upload_file)
@@ -322,6 +329,5 @@ async def scan_omr(request_data: OMRUrlRequest):
         print("--- OMR SCAN ERROR TRACEBACK ---")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
-
 
 
