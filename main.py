@@ -271,12 +271,21 @@ async def scan_omr_file(file: UploadFile = File(...)):
         raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-# --- Supabase Image URL के ज़रिए OMR स्कैन करने का नया एंडपॉइंट ---
+
+
+
+
+
+
+
+import traceback
+
 class OMRUrlRequest(BaseModel):
     image_url: str
 
 @app.post("/scan-omr")
 async def scan_omr(request_data: OMRUrlRequest):
+    print("Received URL:", request_data.image_url)
     if not request_data.image_url:
         raise HTTPException(status_code=400, detail="image_url is required")
     
@@ -288,19 +297,22 @@ async def scan_omr(request_data: OMRUrlRequest):
         with urllib.request.urlopen(req) as response:
             image_bytes = response.read()
 
-        # UploadFile को सही SpooledTemporaryFile रैपर के साथ तैयार करें
-        upload_file = UploadFile(filename="sheet.jpg")
-        await upload_file.write(image_bytes)
-        await upload_file.seek(0)
+        # इमेज बाइट्स से सीधे OpenCV इमेज बनाएँ
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if img is None:
+            raise ValueError("Downloaded file is not a valid image")
+
+        # बाइट्स को UploadFile जैसा फ़ाइल ऑब्जेक्ट बनाएँ
+        file_obj = io.BytesIO(image_bytes)
+        upload_file = UploadFile(file=file_obj, filename="omr_sheet.jpg")
         
-        # पुराने फ़ंक्शन को कॉल करें
-        if asyncio.iscoroutinefunction(scan_omr_file):
-            return await scan_omr_file(file=upload_file)
-        else:
-            return scan_omr_file(file=upload_file)
+        # आपके फ़ंक्शन को चलाएँ
+        return await scan_omr_file(upload_file)
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
-
-
+        # असली एरर रेंडर लॉग्स में साफ़ दिखेगा
+        print("--- OMR SCAN ERROR TRACEBACK ---")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
