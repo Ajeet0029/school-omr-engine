@@ -18,6 +18,11 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 
 
+
+
+
+
+
 import os
 import io
 import uuid
@@ -32,10 +37,10 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.utils import ImageReader
 import qrcode
+import urllib.request
 
 app = FastAPI(title="School OMR Engine")
 
-# CORS सक्षम करें (FlutterFlow से बिना रुकावट कॉल के लिए)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -47,52 +52,46 @@ app.add_middleware(
 PDF_DIR = "/tmp"
 os.makedirs(PDF_DIR, exist_ok=True)
 
-# ----------------- HINDI FONT SETUP -----------------
+# ----------------- HINDI FONT (STATIC TTF - NO BOXES) -----------------
 FONT_NAME = "HindiFont"
-LOCAL_FONT_PATH = os.path.join(os.path.dirname(__file__), "hindi.ttf")
+FONT_PATH = "/tmp/NotoSansDevanagari-Regular.ttf"
 
-if os.path.exists(LOCAL_FONT_PATH) and os.path.getsize(LOCAL_FONT_PATH) > 10000:
-    pdfmetrics.registerFont(TTFont(FONT_NAME, LOCAL_FONT_PATH))
-    print("SUCCESS: Local hindi.ttf loaded successfully!")
-else:
-    # यदि फाइल अभी अपलोड नहीं हुई तो ऑटो-डाउनलोड फॉलबैक
-    TMP_FONT = "/tmp/hindi.ttf"
-    if not os.path.exists(TMP_FONT) or os.path.getsize(TMP_FONT) < 10000:
-        import urllib.request
-        try:
-            url = "https://github.com/google/fonts/raw/main/ofl/notosansdevanagari/NotoSansDevanagari-Regular.ttf"
-            urllib.request.urlretrieve(url, TMP_FONT)
-        except Exception as e:
-            print("Font download failed:", e)
-    
-    if os.path.exists(TMP_FONT) and os.path.getsize(TMP_FONT) > 10000:
-        pdfmetrics.registerFont(TTFont(FONT_NAME, TMP_FONT))
-        print("SUCCESS: Downloaded hindi.ttf loaded successfully!")
+if not os.path.exists(FONT_PATH) or os.path.getsize(FONT_PATH) < 10000:
+    try:
+        url = "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf"
+        urllib.request.urlretrieve(url, FONT_PATH)
+        print("Hindi Font downloaded successfully")
+    except Exception as e:
+        print("Font download error:", e)
+
+try:
+    if os.path.exists(FONT_PATH) and os.path.getsize(FONT_PATH) > 10000:
+        pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_PATH))
     else:
         FONT_NAME = "Helvetica"
+except Exception:
+    FONT_NAME = "Helvetica"
 
 
 @app.get("/")
 def root():
-    return {"status": "live", "engine": "OMR Generator & Scanner"}
+    return {"status": "live", "engine": "OMR Generator"}
 
 
 # ==========================================
-# A4 OMR PRINTABLE SHEET GENERATOR (FINAL)
+# A4 OMR PRINTABLE SHEET GENERATOR
 # ==========================================
 @app.post("/generate-omr-pdf")
 def generate_omr_pdf(payload: dict):
     try:
-        # 1. डेटा निकालना (Dynamic Input)
-        school_name = payload.get("school_name") or payload.get("school") or "राजकीय विद्यालय"
-        subject = payload.get("subject") or "गणित"
-        class_name = payload.get("class_name") or payload.get("class") or "कक्षा 6"
-        section = payload.get("section") or "A"
-        assignment_id = str(payload.get("assignment_id") or payload.get("test_id") or f"EXAM-{uuid.uuid4().hex[:4].upper()}")
-        roll_no = str(payload.get("roll_no") or "")
+        school_name = payload.get("school_name", "राजकीय उच्च माध्यमिक विद्यालय")
+        subject = payload.get("subject", "गणित")
+        class_name = payload.get("class_name") or payload.get("classs_name", "6")
+        section = payload.get("section", "A")
+        assignment_id = str(payload.get("assignment_id", "ASG-101"))
+        roll_no = str(payload.get("roll_no", ""))
         print_date = payload.get("exam_date") or datetime.now().strftime("%d-%b-%Y")
 
-        # 2. स्क्रीन वाले प्रश्नों को पार्स करना
         raw_questions = payload.get("questions", [])
         if isinstance(raw_questions, str):
             try:
@@ -110,7 +109,7 @@ def generate_omr_pdf(payload: dict):
         p = canvas.Canvas(file_path, pagesize=A4)
         width, height = A4
 
-        # 3. 4 कॉर्नर एंकर मार्कर्स (स्कैनर अलाइनमेंट)
+        # 4 कॉर्नर एंकर मार्कर्स (18x18 pt)
         anchor_size = 18
         p.setFillColorRGB(0, 0, 0)
         p.rect(20, height - 20 - anchor_size, anchor_size, anchor_size, fill=1) # Top-Left
@@ -120,13 +119,12 @@ def generate_omr_pdf(payload: dict):
 
         # ---------------- TOP HEADER ----------------
         p.setFont(FONT_NAME, 13)
-        header_text = f"{school_name} | {class_name} ({section}) - {subject}"
-        p.drawString(50, height - 35, str(header_text)[:55])
+        p.drawString(50, height - 35, f"{school_name} | Class: {class_name}-{section} ({subject})")
 
         p.setFont(FONT_NAME, 8)
         p.drawString(50, height - 48, "निर्देश: सभी प्रश्नों के उत्तर नीचे OMR स्ट्रिप में नीले/काले पेन से गोला भरकर दें।")
 
-        # रोल नंबर व नाम बॉक्स
+        # रोल नंबर बॉक्स
         p.setFont("Helvetica-Bold", 8.5)
         p.drawString(340, height - 34, "Name: ____________________")
         p.drawString(340, height - 48, "Roll No:")
@@ -151,18 +149,12 @@ def generate_omr_pdf(payload: dict):
         for idx in range(10):
             q_data = questions[idx] if idx < len(questions) and isinstance(questions[idx], dict) else {}
 
-            # फ़ील्ड नामों का विस्तृत फ़ॉलबैक
-            q_text = (q_data.get('question_text') or q_data.get('question') or 
-                      q_data.get('Question') or q_data.get('text') or f"प्रश्न {idx+1}")
-            
-            opt_a = (q_data.get('opt_a') or q_data.get('option_a') or 
-                     q_data.get('OptionA') or q_data.get('a') or "A")
-            opt_b = (q_data.get('opt_b') or q_data.get('option_b') or 
-                     q_data.get('OptionB') or q_data.get('b') or "B")
-            opt_c = (q_data.get('opt_c') or q_data.get('option_c') or 
-                     q_data.get('OptionC') or q_data.get('c') or "C")
-            opt_d = (q_data.get('opt_d') or q_data.get('option_d') or 
-                     q_data.get('OptionD') or q_data.get('d') or "D")
+            # सीधे Supabase की फ़ील्ड्स
+            q_text = q_data.get('question_text') or f"प्रश्न {idx+1}"
+            opt_a = q_data.get('opt_a') or "A"
+            opt_b = q_data.get('opt_b') or "B"
+            opt_c = q_data.get('opt_c') or "C"
+            opt_d = q_data.get('opt_d') or "D"
 
             if idx < 5:
                 cx = col1_x
@@ -173,11 +165,11 @@ def generate_omr_pdf(payload: dict):
                 cy = y_col2
                 y_col2 -= 42
 
-            # सवाल
+            # सवाल प्रिंट करें
             p.setFont(FONT_NAME, 8)
             p.drawString(cx, cy, f"Q{idx+1}. {str(q_text)[:48]}")
 
-            # 4 विकल्प
+            # 4 विकल्प प्रिंट करें
             p.setFont(FONT_NAME, 7.5)
             p.drawString(cx + 6, cy - 12, f"(A) {str(opt_a)[:18]}")
             p.drawString(cx + 120, cy - 12, f"(C) {str(opt_c)[:18]}")
@@ -188,7 +180,6 @@ def generate_omr_pdf(payload: dict):
         p.setLineWidth(1.2)
         p.line(30, 205, width - 30, 205)
 
-        # 1. डिटेल्स
         p.setFont("Helvetica-Bold", 8.5)
         p.drawString(45, 192, "TEST DETAILS")
         p.setFont("Helvetica", 8)
@@ -197,7 +188,7 @@ def generate_omr_pdf(payload: dict):
         p.drawString(45, 154, f"Date: {print_date}")
         p.drawString(45, 142, f"Roll No: {roll_no if roll_no else '____'}")
 
-        # 2. QR कोड
+        # QR Code
         qr_payload = f"{assignment_id}|{class_name}|{section}|{subject}|{print_date}"
         qr_img = qrcode.make(qr_payload)
         qr_buffer = io.BytesIO()
@@ -205,7 +196,7 @@ def generate_omr_pdf(payload: dict):
         qr_buffer.seek(0)
         p.drawImage(ImageReader(qr_buffer), 45, 76, width=56, height=56)
 
-        # 3. 2 डिजिट रोल नंबर OMR ग्रिड
+        # Roll No OMR Bubbles
         p.setFont("Helvetica-Bold", 8.5)
         p.drawString(125, 192, "ROLL NO")
         for col_idx in range(2):
@@ -216,7 +207,7 @@ def generate_omr_pdf(payload: dict):
                 p.setFont("Helvetica", 5.5)
                 p.drawCentredString(bx, by - 2, str(num))
 
-        # 4. उत्तर बबल्स स्ट्रिप (1 से 10)
+        # 10 Questions Answer Bubbles
         p.setFont("Helvetica-Bold", 8.5)
         p.drawString(210, 192, "ANSWER STRIP (Mark One Option Only)")
 
@@ -253,6 +244,7 @@ def download_pdf(filename: str):
     if os.path.exists(file_path):
         return FileResponse(path=file_path, filename=filename, media_type='application/pdf')
     raise HTTPException(status_code=404, detail="File not found")
+
 
 
 
