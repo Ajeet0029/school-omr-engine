@@ -23,24 +23,34 @@ import urllib.request
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
-# हिंदी फॉन्ट सेटअप (सर्वर स्टार्ट होते ही Noto Sans Devanagari डाउनलोड करेगा)
-FONT_NAME = "HindiFont"
-FONT_PATH = "/tmp/NotoSansDevanagari-Regular.ttf"
+import os
+import urllib.request
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 
+FONT_NAME = "HindiFont"
+FONT_PATH = "/tmp/Gargi.ttf"
+
+# Static Devanagari TrueType Font (100% ReportLab Compatible)
 if not os.path.exists(FONT_PATH):
     try:
-        font_url = "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansdevanagari/NotoSansDevanagari%5Bwdth%2Cwght%5D.ttf"
+        # Gargi / Lohit static font URL
+        font_url = "https://raw.githubusercontent.com/fedora-hindi-fonts/gargi-fonts/master/gargi.ttf"
         urllib.request.urlretrieve(font_url, FONT_PATH)
     except Exception as e:
-        print("Font download error:", e)
+        print("Font download failed:", e)
 
-if os.path.exists(FONT_PATH):
-    try:
+# फॉन्ट रजिस्टर करें (सुरक्षित तरीके से ताकि सर्वर कभी 500 न दे)
+try:
+    if os.path.exists(FONT_PATH) and os.path.getsize(FONT_PATH) > 10000:
         pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_PATH))
-    except Exception:
+    else:
         FONT_NAME = "Helvetica"
-else:
+except Exception as e:
+    print("Font registration error:", e)
     FONT_NAME = "Helvetica"
+
+
 
 
 
@@ -235,6 +245,8 @@ def generate_omr_pdf(payload: dict):
         }
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
