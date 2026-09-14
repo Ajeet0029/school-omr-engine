@@ -17,6 +17,34 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 
+
+
+import urllib.request
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+
+# हिंदी फॉन्ट सेटअप (सर्वर स्टार्ट होते ही Noto Sans Devanagari डाउनलोड करेगा)
+FONT_NAME = "HindiFont"
+FONT_PATH = "/tmp/NotoSansDevanagari-Regular.ttf"
+
+if not os.path.exists(FONT_PATH):
+    try:
+        font_url = "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansdevanagari/NotoSansDevanagari%5Bwdth%2Cwght%5D.ttf"
+        urllib.request.urlretrieve(font_url, FONT_PATH)
+    except Exception as e:
+        print("Font download error:", e)
+
+if os.path.exists(FONT_PATH):
+    try:
+        pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_PATH))
+    except Exception:
+        FONT_NAME = "Helvetica"
+else:
+    FONT_NAME = "Helvetica"
+
+
+
+
 app = FastAPI(title="School OMR Engine API")
 
 # Supabase Credentials
@@ -90,9 +118,9 @@ def generate_omr_pdf(payload: dict):
 
         # ---------------- TOP HEADER & ROLL NO SECTION ----------------
         # स्कूल / टेस्ट का नाम
-        p.setFont("Helvetica-Bold", 13)
+        p.setFont("FONT_NAME", 12)
         p.drawString(50, height - 35, str(school_name))
-        p.setFont("Helvetica", 8.5)
+        p.setFont("FONT_NAME", 8)
         p.drawString(50, height - 48, "निर्देश: सभी प्रश्नों के उत्तर नीचे OMR स्ट्रिप में नीले/काले पेन से गोला भरकर दें।")
 
         # रोल नंबर व नाम बॉक्स (Header Right Side)
@@ -131,11 +159,11 @@ def generate_omr_pdf(payload: dict):
             opt_d = q_data.get('opt_d', 'विकल्प D')
 
             # सवाल का शीर्षक (Q.1, Q.2...)
-            p.setFont("Helvetica-Bold", 8.5)
+            p.setFont("FONT_NAME", 8.5)
             p.drawString(col_x, y_pos, f"Q{idx+1}. {str(q_text)[:48]}")
             
             # ऑप्शन्स 2-कॉलम लेआउट में
-            p.setFont("Helvetica", 7.5)
+            p.setFont("FONT_NAME", 7.5)
             p.drawString(col_x + 8, y_pos - 12, f"(A) {str(opt_a)[:18]}")
             p.drawString(col_x + 120, y_pos - 12, f"(C) {str(opt_c)[:18]}")
             
