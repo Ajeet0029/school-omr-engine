@@ -47,22 +47,6 @@ def download_pdf(filename: str):
         content_disposition_type="inline"
     )
 
-
-
-# ==========================================
-# 2. OMR SCANNING (फ़ाइल अपलोड सपोर्ट)
-# ==========================================
-@app.post("/scan-omr-file")
-async def scan_omr_file(file: UploadFile = File(...)):
-    try:
-        contents = await file.read()
-        arr = np.frombuffer(contents, dtype=np.uint8)
-        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-
-        if img is None:
-            raise HTTPException(status_code=400, detail="Image file corrupted or invalid")
-
-        # QR कोड स्कैनिंग# ==========================================
 # 1. A4 OMR PRINTABLE SHEET GENERATOR (UPDATED)
 # ==========================================
 @app.post("/generate-omr-pdf")
@@ -224,6 +208,25 @@ def generate_omr_pdf(payload: dict):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+
+# ==========================================
+# 2. OMR SCANNING (फ़ाइल अपलोड सपोर्ट)
+# ==========================================
+@app.post("/scan-omr-file")
+async def scan_omr_file(file: UploadFile = File(...)):
+    try:
+        contents = await file.read()
+        arr = np.frombuffer(contents, dtype=np.uint8)
+        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+
+        if img is None:
+            raise HTTPException(status_code=400, detail="Image file corrupted or invalid")
+
+        # QR कोड स्कैनिंग# ==========================================
 
 
         qr_text, _, _ = qr_detector.detectAndDecode(img)
