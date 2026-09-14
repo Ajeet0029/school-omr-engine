@@ -88,22 +88,23 @@ def download_pdf(filename: str):
         content_disposition_type="inline"
     )
 
-# 1. A4 OMR PRINTABLE SHEET GENERATOR (UPDATED)
+
+# ==========================================
+# 1. A4 OMR PRINTABLE SHEET GENERATOR (DYNAMIC)
 # ==========================================
 @app.post("/generate-omr-pdf")
 def generate_omr_pdf(payload: dict):
     try:
-        school_name = payload.get("school_name", "कक्षा 6 गणित - साप्ताहिक टेस्ट")
-        subject = payload.get("subject", "गणित")
-        class_name = payload.get("class_name", "Class 6")
-        section = payload.get("section", "A")
-        assignment_id = str(payload.get("assignment_id", f"EXAM-{uuid.uuid4().hex[:6].upper()}"))
-        roll_no = str(payload.get("roll_no", ""))
-        
-        # आज की तारीख (Format: 13-Sep-2026)
+        # डायनेमिक हेडर डेटा
+        school_name = payload.get("school_name") or payload.get("school") or "राजकीय उच्च प्राथमिक विद्यालय"
+        subject = payload.get("subject") or "गणित"
+        class_name = payload.get("class_name") or payload.get("class") or "कक्षा 6"
+        section = payload.get("section") or "A"
+        assignment_id = str(payload.get("assignment_id") or payload.get("test_id") or f"EXAM-{uuid.uuid4().hex[:4].upper()}")
+        roll_no = str(payload.get("roll_no") or "")
         print_date = payload.get("exam_date") or datetime.now().strftime("%d-%b-%Y")
-        
-        # FlutterFlow स्क्रीन से भेजे गए 10 प्रश्न
+
+        # डायनेमिक प्रश्न लिस्ट
         raw_questions = payload.get("questions", [])
         if isinstance(raw_questions, str):
             try:
@@ -121,7 +122,7 @@ def generate_omr_pdf(payload: dict):
         p = canvas.Canvas(file_path, pagesize=A4)
         width, height = A4
 
-        # 4 Anchor Markers (18x18 pt - Scanner OMR Alignment)
+        # 4 कॉर्नर एंकर मार्कर्स (स्कैनिंग के लिए)
         anchor_size = 18
         p.setFillColorRGB(0, 0, 0)
         p.rect(20, height - 20 - anchor_size, anchor_size, anchor_size, fill=1) # Top-Left
@@ -129,19 +130,20 @@ def generate_omr_pdf(payload: dict):
         p.rect(20, 20, anchor_size, anchor_size, fill=1) # Bottom-Left
         p.rect(width - 20 - anchor_size, 20, anchor_size, anchor_size, fill=1) # Bottom-Right
 
-        # ---------------- TOP HEADER & ROLL NO SECTION ----------------
-        # स्कूल / टेस्ट का नाम
-        p.setFont(FONT_NAME, 12)
-        p.drawString(50, height - 35, str(school_name))
+        # ---------------- 1. शीर्ष हेडर (स्कूल, कक्षा, विषय, रोल नंबर) ----------------
+        p.setFont(FONT_NAME, 13)
+        header_title = f"{school_name} | {class_name} ({section}) - {subject}"
+        p.drawString(50, height - 35, header_title[:55])
+        
         p.setFont(FONT_NAME, 8)
         p.drawString(50, height - 48, "निर्देश: सभी प्रश्नों के उत्तर नीचे OMR स्ट्रिप में नीले/काले पेन से गोला भरकर दें।")
 
-        # रोल नंबर व नाम बॉक्स (Header Right Side)
+        # रोल नंबर व नाम बॉक्स
         p.setFont("Helvetica-Bold", 8.5)
         p.drawString(340, height - 34, "Name: ____________________")
         p.drawString(340, height - 48, "Roll No:")
-        
-        # रोल नंबर के 4 चौकोर बॉक्सेस
+
+        # 4 रोल नंबर बॉक्सेस
         start_box_x = 385
         for b in range(4):
             bx = start_box_x + (b * 14)
@@ -150,53 +152,64 @@ def generate_omr_pdf(payload: dict):
                 p.setFont("Helvetica-Bold", 9)
                 p.drawCentredString(bx + 5.5, height - 50, roll_no[b])
 
-        # हेडर डिवाइडर लाइन
-        p.setLineWidth(1)
-        p.line(45, height - 58, width - 45, height - 58)
+        p.setLineWidth(0.8)
+        p.line(45, height - 56, width - 45, height - 56)
 
-        # ---------------- 10 QUESTIONS GRID (TOP HALF) ----------------
-        y_pos = height - 76
+        # ---------------- 2. स्क्रीन वाले 10 प्रश्न ग्रिड ----------------
         col1_x = 50
-        col2_x = 310
+        col2_x = 305
+        y_col1 = height - 74
+        y_col2 = height - 74
 
         for idx in range(10):
-            col_x = col1_x if idx < 5 else col2_x
-            if idx == 5:
-                y_pos = height - 76
-
+            # प्रश्न डेटा निकालना (अलग-अलग की-नामों का ऑटो-सपोर्ट)
             q_data = questions[idx] if idx < len(questions) and isinstance(questions[idx], dict) else {}
-            q_text = q_data.get('question_text', f'प्रश्न {idx+1}: सही विकल्प चुनें।')
-            opt_a = q_data.get('opt_a', 'विकल्प A')
-            opt_b = q_data.get('opt_b', 'विकल्प B')
-            opt_c = q_data.get('opt_c', 'विकल्प C')
-            opt_d = q_data.get('opt_d', 'विकल्प D')
-
-            # सवाल का शीर्षक (Q.1, Q.2...)
-            p.setFont(FONT_NAME, 8.5)
-            p.drawString(col_x, y_pos, f"Q{idx+1}. {str(q_text)[:48]}")
             
-            # ऑप्शन्स 2-कॉलम लेआउट में
+            q_text = (q_data.get('question_text') or q_data.get('question') or 
+                      q_data.get('text') or f"प्रश्न {idx+1}")
+            
+            opt_a = (q_data.get('opt_a') or q_data.get('option_a') or 
+                     q_data.get('a') or "A")
+            opt_b = (q_data.get('opt_b') or q_data.get('option_b') or 
+                     q_data.get('b') or "B")
+            opt_c = (q_data.get('opt_c') or q_data.get('option_c') or 
+                     q_data.get('c') or "C")
+            opt_d = (q_data.get('opt_d') or q_data.get('option_d') or 
+                     q_data.get('d') or "D")
+
+            # कॉलम निर्धारण (0-4 बायाँ कॉलम, 5-9 दायाँ कॉलम)
+            if idx < 5:
+                cx = col1_x
+                cy = y_col1
+                y_col1 -= 42
+            else:
+                cx = col2_x
+                cy = y_col2
+                y_col2 -= 42
+
+            # प्रश्न टेक्स्ट
+            p.setFont(FONT_NAME, 8)
+            p.drawString(cx, cy, f"Q{idx+1}. {str(q_text)[:46]}")
+
+            # 4 विकल्प
             p.setFont(FONT_NAME, 7.5)
-            p.drawString(col_x + 8, y_pos - 12, f"(A) {str(opt_a)[:18]}")
-            p.drawString(col_x + 120, y_pos - 12, f"(C) {str(opt_c)[:18]}")
-            
-            p.drawString(col_x + 8, y_pos - 22, f"(B) {str(opt_b)[:18]}")
-            p.drawString(col_x + 120, y_pos - 22, f"(D) {str(opt_d)[:18]}")
-            
-            y_pos -= 42
+            p.drawString(cx + 6, cy - 12, f"(A) {str(opt_a)[:18]}")
+            p.drawString(cx + 120, cy - 12, f"(C) {str(opt_c)[:18]}")
+            p.drawString(cx + 6, cy - 22, f"(B) {str(opt_b)[:18]}")
+            p.drawString(cx + 120, cy - 22, f"(D) {str(opt_d)[:18]}")
 
-        # ---------------- BOTTOM OMR EVALUATION STRIP ----------------
+        # ---------------- 3. निचली OMR स्ट्रिप ----------------
         p.setLineWidth(1.2)
         p.line(30, 205, width - 30, 205)
 
-        # 1. टेस्ट डिटेल्स व QR कोड (बायाँ भाग)
-        p.setFont("Helvetica-Bold", 9)
+        # टेस्ट डिटेल्स
+        p.setFont("Helvetica-Bold", 8.5)
         p.drawString(45, 192, "TEST DETAILS")
         p.setFont("Helvetica", 8)
         p.drawString(45, 178, f"Class: {class_name}-{section}")
         p.drawString(45, 166, f"Subject: {subject}")
         p.drawString(45, 154, f"Date: {print_date}")
-        p.drawString(45, 142, "Max Marks: 10")
+        p.drawString(45, 142, f"Roll No: {roll_no if roll_no else '____'}")
 
         # QR कोड
         qr_payload = f"{assignment_id}|{class_name}|{section}|{subject}|{print_date}"
@@ -206,9 +219,9 @@ def generate_omr_pdf(payload: dict):
         qr_buffer.seek(0)
         p.drawImage(ImageReader(qr_buffer), 45, 76, width=56, height=56)
 
-        # 2. रोल नंबर OMR ग्रिड (मध्य भाग)
+        # 2 डिजिट रोल नंबर OMR ग्रिड
         p.setFont("Helvetica-Bold", 8.5)
-        p.drawString(125, 192, "ROLL NO (2 Digits)")
+        p.drawString(125, 192, "ROLL NO")
         for col_idx in range(2):
             bx = 135 + (col_idx * 24)
             for num in range(10):
@@ -217,7 +230,7 @@ def generate_omr_pdf(payload: dict):
                 p.setFont("Helvetica", 5.5)
                 p.drawCentredString(bx, by - 2, str(num))
 
-        # 3. उत्तर बबल्स स्ट्रिप (Q1 से Q10) (दायाँ भाग)
+        # उत्तर बबल्स ग्रिड (1 से 10)
         p.setFont("Helvetica-Bold", 8.5)
         p.drawString(210, 192, "ANSWER STRIP (Mark One Option Only)")
 
@@ -240,17 +253,14 @@ def generate_omr_pdf(payload: dict):
         p.save()
 
         direct_pdf_url = f"https://school-omr-engine.onrender.com/download-pdf/{filename}"
-
-        return {
-            "success": True,
-            "pdf_url": direct_pdf_url,
-            "filename": filename
-        }
+        return {"success": True, "pdf_url": direct_pdf_url, "filename": filename}
 
     except Exception as e:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
 
 
 
