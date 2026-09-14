@@ -29,26 +29,29 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
 FONT_NAME = "HindiFont"
-FONT_PATH = "/tmp/Gargi.ttf"
+FONT_PATH = "/tmp/Lohit-Devanagari.ttf"
 
-# Static Devanagari TrueType Font (100% ReportLab Compatible)
-if not os.path.exists(FONT_PATH):
+# 1. Google Fonts GitHub से सीधे Static Devanagari TTF डाउनलोड
+if not os.path.exists(FONT_PATH) or os.path.getsize(FONT_PATH) < 10000:
     try:
-        # Gargi / Lohit static font URL
-        font_url = "https://raw.githubusercontent.com/fedora-hindi-fonts/gargi-fonts/master/gargi.ttf"
+        font_url = "https://raw.githubusercontent.com/google/fonts/main/ofl/lohitdevanagari/Lohit-Devanagari.ttf"
         urllib.request.urlretrieve(font_url, FONT_PATH)
+        print("Hindi Font downloaded successfully!")
     except Exception as e:
         print("Font download failed:", e)
 
-# फॉन्ट रजिस्टर करें (सुरक्षित तरीके से ताकि सर्वर कभी 500 न दे)
+# 2. ReportLab में फॉन्ट रजिस्टर करें
 try:
     if os.path.exists(FONT_PATH) and os.path.getsize(FONT_PATH) > 10000:
         pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_PATH))
+        print("Hindi Font registered successfully!")
     else:
         FONT_NAME = "Helvetica"
 except Exception as e:
-    print("Font registration error:", e)
+    print("Font register error:", e)
     FONT_NAME = "Helvetica"
+
+
 
 
 
