@@ -81,9 +81,12 @@ def root():
 # ==========================================
 # A4 OMR PRINTABLE SHEET GENERATOR
 # ==========================================
+from fastapi import Request
+
 @app.post("/generate-omr-pdf")
-def generate_omr_pdf(payload: dict):
+async def generate_omr_pdf(request: Request):
     try:
+        payload = await request.json()
         school_name = payload.get("school_name", "राजकीय उच्च माध्यमिक विद्यालय")
         subject = payload.get("subject", "गणित")
         class_name = payload.get("class_name") or payload.get("classs_name", "6")
