@@ -2,29 +2,19 @@ import os
 import io
 import json
 import base64
+import traceback
 from datetime import datetime
 from typing import List, Optional, Any, Dict
 
 import qrcode
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response
-from pydantic import BaseModel
 from weasyprint import HTML
 
-app = FastAPI(title="Dynamic Hindi OMR Generator")
-
-# इनपुट डेटा का स्कीमा
-class OMRRequest(BaseModel):
-    class_name: Optional[Any] = "7"
-    subject: Optional[Any] = "HINDI"
-    section: Optional[Any] = "A"
-    school_name: Optional[Any] = "राजकीय उच्च माध्यमिक विद्यालय"
-    total_questions: Optional[Any] = 10
-    assign_id: Optional[Any] = None
-    question_json: Optional[Any] = []
+app = FastAPI(title="School OMR Engine")
 
 def make_qr_base64(payload_dict: dict) -> str:
-    """QR कोड बनाकर Base64 स्ट्रिंग में बदलता है ताकि HTML में सीधे दिख सके"""
+    """QR कोड बनाकर Base64 स्ट्रिंग तैयार करता है"""
     qr = qrcode.QRCode(
         version=None,
         error_correction=qrcode.constants.ERROR_CORRECT_M,
@@ -40,87 +30,101 @@ def make_qr_base64(payload_dict: dict) -> str:
 
 @app.get("/")
 def root():
-    return {"status": "live", "engine": "WeasyPrint Hindi OMR Engine"}
+    return {"status": "live", "engine": "WeasyPrint OMR Engine"}
 
 @app.post("/generate-omr-pdf")
 @app.post("/GenerateOMRPdf")
-async def generate_omr_pdf(req: OMRRequest):
+async def generate_omr_pdf(request: Request):
     try:
-        # क्लास का नाम दोनों कीज़ से चेक करना
-        cls_name = str(req.class_name or req.classs_name or "6")
+        data = await request.json()
+        print("Received payload keys:", list(data.keys()))
+
+        # 1. डायनामिक करंट डेट
+        current_date = datetime.now().strftime("%d-%b-%Y")
         
-        # total_questions अगर स्ट्रिंग में आया हो तो int बनाना
+        # 2. फ़ील्ड्स को सुरक्षित पढ़ना
+        cls_name = str(data.get("classs_name") or data.get("class_name") or "6")
+        subj = str(data.get("subject") or "HINDI")
+        sec = str(data.get("section") or "A")
+        school = str(data.get("school_name") or "राजकीय उच्च माध्यमिक विद्यालय")
+        assign_id = str(data.get("assign_id") or f"TST-{int(datetime.now().timestamp())}")
+        
+        # 3. total_questions पार्स करना (10 या 20)
+        raw_tq = data.get("total_questions")
         try:
-            total_q = int(req.total_questions)
-        except:
+            total_q = int(raw_tq) if raw_tq is not None else 10
+        except Exception:
             total_q = 10
 
-        # question_json अगर स्ट्रिंग रूप में आया हो तो parse करना
-        questions = req.question_json
-        if isinstance(questions, str):
-            questions = json.loads(questions)
-        if not isinstance(questions, list):
-            questions = []
-            
-        active_questions = questions[:total_q]
+        # 4. FlutterFlow से आई प्रश्न लिस्ट को पार्स करना
+        raw_questions = data.get("question_json") or []
+        if isinstance(raw_questions, str):
+            try:
+                raw_questions = json.loads(raw_questions)
+            except Exception:
+                raw_questions = []
 
+        if not isinstance(raw_questions, list):
+            raw_questions = []
 
+        # तय संख्या तक सवाल लेना (स्क्रीन पर जो क्रम है, वही रहेगा)
+        active_questions = raw_questions[:total_q]
+        if not active_questions:
+            active_questions = [
+                {
+                    "question_text": "प्रश्न उपलब्ध नहीं हैं",
+                    "opt_a": "-",
+                    "opt_b": "-",
+                    "opt_c": "-",
+                    "opt_d": "-",
+                    "correct_opt": "A"
+                }
+            ]
 
-
-
-
-
-        # 1. आज की तारीख (Dynamic Date of Printing)
-        current_date = datetime.now().strftime("%d-%b-%Y")
-        total_q = req.total_questions if req.total_questions in [10, 20] else len(req.question_json)
-        assign_id = req.assign_id or f"TST-{int(datetime.now().timestamp())}"
-        
-        # 2. जितने सवाल तय हैं, उतने ही लेना (10 या 20)
-        active_questions = req.question_json[:total_q]
-        
-        # 3. QR कोड के लिए Answer Key तैयार करना (Auto-Checking स्कैनर के लिए)
+        # 5. आपके सटीक कॉलम 'correct_opt' से QR Code हेतु Answer Key बनाना
         answer_key = {}
         for idx, q in enumerate(active_questions):
-            ans = q.get('correct_option') or q.get('answer') or q.get('correct_opt') or ''
+            q_dict = dict(q) if isinstance(q, dict) else {}
+            ans = q_dict.get('correct_opt') or q_dict.get('correct_option') or 'A'
             answer_key[str(idx + 1)] = str(ans).strip().upper()
-            
+
         qr_payload = {
             "aid": assign_id,
-            "cls": req.classs_name,
-            "sec": req.section,
-            "sub": req.subject,
+            "cls": cls_name,
+            "sec": sec,
+            "sub": subj,
             "total": len(active_questions),
             "dt": current_date,
             "keys": answer_key
         }
         qr_b64 = make_qr_base64(qr_payload)
-        
-        # 4. प्रश्नों को दो कॉलमों में बाँटना (बाएँ और दाएँ)
+
+        # 6. प्रश्नों को 2 कॉलमों में विभाजित करना
         half = (len(active_questions) + 1) // 2
         left_q = active_questions[:half]
         right_q = active_questions[half:]
-        
-        # 10 vs 20 प्रश्नों के लिए लेआउट डायनामिक स्केलिंग
+
         is_20 = total_q > 10
         q_font_size = "8pt" if is_20 else "9.5pt"
         opt_font_size = "7.5pt" if is_20 else "8.5pt"
         q_spacing = "4px" if is_20 else "8px"
-        
+
         def render_q_html(questions_list, start_index):
             html = ""
             for i, q in enumerate(questions_list):
+                q_dict = dict(q) if isinstance(q, dict) else {}
                 q_num = start_index + i + 1
-                q_text = q.get('question_text') or q.get('question') or ''
-                a = q.get('opt_a', '')
-                b = q.get('opt_b', '')
-                c = q.get('opt_c', '')
-                d = q.get('opt_d', '')
+                q_text = q_dict.get('question_text', '')
+                a = q_dict.get('opt_a', '')
+                b = q_dict.get('opt_b', '')
+                c = q_dict.get('opt_c', '')
+                d = q_dict.get('opt_d', '')
                 html += f"""
-                <div class="q-item" style="margin-bottom: {q_spacing};">
-                  <div class="q-title" style="font-size: {q_font_size};">{q_num}. {q_text}</div>
-                  <table class="opt-table" style="font-size: {opt_font_size};">
-                    <tr><td>(A) {a}</td><td>(B) {b}</td></tr>
-                    <tr><td>(C) {c}</td><td>(D) {d}</td></tr>
+                <div class="q-item" style="margin-bottom: {q_spacing}; page-break-inside: avoid;">
+                  <div class="q-title" style="font-size: {q_font_size}; font-weight: bold;">{q_num}. {q_text}</div>
+                  <table class="opt-table" style="width: 100%; font-size: {opt_font_size};">
+                    <tr><td style="width: 50%;">(A) {a}</td><td style="width: 50%;">(B) {b}</td></tr>
+                    <tr><td style="width: 50%;">(C) {c}</td><td style="width: 50%;">(D) {d}</td></tr>
                   </table>
                 </div>
                 """
@@ -128,38 +132,31 @@ async def generate_omr_pdf(req: OMRRequest):
 
         left_html = render_q_html(left_q, 0)
         right_html = render_q_html(right_q, half)
-        
-        # 5. OMR Answer Strip (10 प्रश्न -> 2 कॉलम, 20 प्रश्न -> 4 कॉलम)
+
+        # 7. OMR Strip तैयार करना (10 सवाल -> 2 कॉलम, 20 सवाल -> 4 कॉलम)
         rows_per_col = 5
-        total_cols = (total_q + rows_per_col - 1) // rows_per_col
+        total_cols = (len(active_questions) + rows_per_col - 1) // rows_per_col
         omr_cols_html = ""
-        for c in range(total_cols):
+        for c in range(max(1, total_cols)):
             col_rows = ""
             for r in range(rows_per_col):
                 q_n = c * rows_per_col + r + 1
-                if q_n <= total_q:
+                if q_n <= len(active_questions):
                     q_str = f"Q0{q_n}" if q_n < 10 else f"Q{q_n}"
                     col_rows += f"""
-                    <div class="omr-row">
+                    <div style="font-size: 7pt; margin-bottom: 2px;">
                       <b>{q_str}</b>
-                      <span class="bubble">A</span>
-                      <span class="bubble">B</span>
-                      <span class="bubble">C</span>
-                      <span class="bubble">D</span>
+                      <span class="bubble">A</span><span class="bubble">B</span><span class="bubble">C</span><span class="bubble">D</span>
                     </div>
                     """
             omr_cols_html += f'<td style="padding-right: 12px; vertical-align: top;">{col_rows}</td>'
-        
-        # 6. संपूर्ण HTML टेम्पलेट (शुद्ध हिंदी फॉन्ट Noto Sans Devanagari के साथ)
+
         full_html = f"""<!DOCTYPE html>
         <html lang="hi">
         <head>
         <meta charset="utf-8">
         <style>
-          @page {{
-            size: A4 portrait;
-            margin: 10mm 12mm 8mm 12mm;
-          }}
+          @page {{ size: A4 portrait; margin: 10mm 12mm 8mm 12mm; }}
           * {{ box-sizing: border-box; margin: 0; padding: 0; }}
           body {{
             font-family: 'Noto Sans Devanagari', 'FreeSans', 'DejaVu Sans', sans-serif;
@@ -173,8 +170,6 @@ async def generate_omr_pdf(req: OMRRequest):
             margin-bottom: 8px;
           }}
           .header-table td {{ vertical-align: top; }}
-          .inst-text {{ font-size: 8.5pt; color: #222; line-height: 1.3; }}
-          .student-meta {{ font-size: 8.5pt; text-align: right; }}
           .roll-box {{
             display: inline-block;
             border: 1px solid #333;
@@ -186,11 +181,6 @@ async def generate_omr_pdf(req: OMRRequest):
           .q-container {{ width: 100%; display: table; table-layout: fixed; }}
           .q-col {{ display: table-cell; width: 49%; vertical-align: top; }}
           .q-col-gap {{ display: table-cell; width: 2%; }}
-          .q-item {{ page-break-inside: avoid; }}
-          .q-title {{ font-weight: bold; margin-bottom: 2px; }}
-          .opt-table {{ width: 100%; }}
-          .opt-table td {{ width: 50%; padding: 1px 0; }}
-          
           .bottom-panel {{
             position: fixed;
             bottom: 0;
@@ -200,13 +190,6 @@ async def generate_omr_pdf(req: OMRRequest):
             padding-top: 5px;
             background: white;
           }}
-          .bottom-table {{ width: 100%; }}
-          .qr-cell {{ width: 62px; vertical-align: middle; }}
-          .details-cell {{ width: 155px; font-size: 7.5pt; line-height: 1.35; padding-left: 6px; vertical-align: middle; }}
-          .divider-cell {{ width: 10px; border-right: 1px solid #ccc; }}
-          .omr-cell {{ padding-left: 10px; vertical-align: middle; }}
-          .omr-strip-title {{ font-size: 7.5pt; font-weight: bold; margin-bottom: 3px; }}
-          .omr-row {{ font-size: 7pt; margin-bottom: 2px; }}
           .bubble {{
             display: inline-block;
             width: 11px;
@@ -225,15 +208,12 @@ async def generate_omr_pdf(req: OMRRequest):
           <table class="header-table">
             <tr>
               <td style="width: 65%;">
-                <div style="font-weight: bold; font-size: 10pt; margin-bottom: 2px;">{req.school_name}</div>
-                <div class="inst-text"><b>निर्देश:</b> सभी प्रश्नों के उत्तर नीचे OMR स्ट्रिप में नीले/काले बॉलपेन से गोला भरकर दें।</div>
+                <div style="font-weight: bold; font-size: 10pt; margin-bottom: 2px;">{school}</div>
+                <div style="font-size: 8.5pt; color: #222;"><b>निर्देश:</b> सभी प्रश्नों के उत्तर नीचे OMR स्ट्रिप में नीले/काले बॉलपेन से गोला भरकर दें।</div>
               </td>
-              <td style="width: 35%;" class="student-meta">
+              <td style="width: 35%; font-size: 8.5pt; text-align: right;">
                 <div>Name: __________________________</div>
-                <div style="margin-top: 4px;">
-                  Roll No: 
-                  <span class="roll-box"></span><span class="roll-box"></span><span class="roll-box"></span><span class="roll-box"></span>
-                </div>
+                <div style="margin-top: 4px;">Roll No: <span class="roll-box"></span><span class="roll-box"></span><span class="roll-box"></span><span class="roll-box"></span></div>
               </td>
             </tr>
           </table>
@@ -245,37 +225,31 @@ async def generate_omr_pdf(req: OMRRequest):
           </div>
 
           <div class="bottom-panel">
-            <table class="bottom-table">
+            <table style="width: 100%;">
               <tr>
-                <td class="qr-cell">
+                <td style="width: 62px; vertical-align: middle;">
                   <img src="data:image/png;base64,{qr_b64}" width="58" height="58" />
                 </td>
-                <td class="details-cell">
-                  <b>TEST DETAILS</b><br>
-                  Class: {req.classs_name} - {req.section}<br>
-                  Subject: {req.subject}<br>
-                  Date: {current_date}<br>
+                <td style="width: 155px; font-size: 7.5pt; line-height: 1.35; padding-left: 6px; vertical-align: middle;">
+                  <b>TEST DETAILS</b><br>Class: {cls_name} - {sec}<br>Subject: {subj}<br>Date: {current_date}<br>
                   <span style="font-size: 6.5pt; color: #555;">ID: {assign_id}</span>
                 </td>
-                <td class="divider-cell"></td>
-                <td class="omr-cell">
-                  <div class="omr-strip-title">ANSWER STRIP (Mark One Option Only)</div>
-                  <table style="border-collapse: collapse;">
-                    <tr>{omr_cols_html}</tr>
-                  </table>
+                <td style="width: 10px; border-right: 1px solid #ccc;"></td>
+                <td style="padding-left: 10px; vertical-align: middle;">
+                  <div style="font-size: 7.5pt; font-weight: bold; margin-bottom: 3px;">ANSWER STRIP (Mark One Option Only)</div>
+                  <table style="border-collapse: collapse;"><tr>{omr_cols_html}</tr></table>
                 </td>
               </tr>
             </table>
           </div>
         </body>
-        </html>
-        """
+        </html>"""
 
-        # 7. WeasyPrint से सीधे PDF में कनवर्ट करना
         pdf_bytes = HTML(string=full_html).write_pdf()
         return Response(content=pdf_bytes, media_type="application/pdf")
 
     except Exception as e:
+        print("ERROR IN GENERATE OMR:")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
-
 
