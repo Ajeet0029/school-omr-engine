@@ -42,6 +42,7 @@ def make_qr_base64(payload_dict: dict) -> str:
 def root():
     return {"status": "live", "engine": "WeasyPrint Hindi OMR Engine"}
 
+@app.post("/generate-omr-pdf")
 @app.post("/GenerateOMRPdf")
 async def generate_omr_pdf(req: OMRRequest):
     try:
