@@ -81,7 +81,7 @@ async def generate_omr_pdf(req: OMRRequest):
         # 3. QR कोड के लिए Answer Key तैयार करना (Auto-Checking स्कैनर के लिए)
         answer_key = {}
         for idx, q in enumerate(active_questions):
-            ans = q.get('correct_option') or q.get('answer') or q.get('correct_ans') or ''
+            ans = q.get('correct_option') or q.get('answer') or q.get('correct_opt') or ''
             answer_key[str(idx + 1)] = str(ans).strip().upper()
             
         qr_payload = {
@@ -111,10 +111,10 @@ async def generate_omr_pdf(req: OMRRequest):
             for i, q in enumerate(questions_list):
                 q_num = start_index + i + 1
                 q_text = q.get('question_text') or q.get('question') or ''
-                a = q.get('option_a', '')
-                b = q.get('option_b', '')
-                c = q.get('option_c', '')
-                d = q.get('option_d', '')
+                a = q.get('opt_a', '')
+                b = q.get('opt_b', '')
+                c = q.get('opt_c', '')
+                d = q.get('opt_d', '')
                 html += f"""
                 <div class="q-item" style="margin-bottom: {q_spacing};">
                   <div class="q-title" style="font-size: {q_font_size};">{q_num}. {q_text}</div>
