@@ -15,13 +15,13 @@ app = FastAPI(title="Dynamic Hindi OMR Generator")
 
 # इनपुट डेटा का स्कीमा
 class OMRRequest(BaseModel):
-    class_name: str
-    subject: Optional[str] = "HINDI"
-    section: Optional[str] = "A"
-    school_name: Optional[str] = "राजकीय उच्च माध्यमिक विद्यालय"
-    total_questions: Optional[int] = 10
-    assign_id: Optional[str] = None
-    question_json: List[Dict[str, Any]]
+    class_name: Optional[Any] = "7"
+    subject: Optional[Any] = "HINDI"
+    section: Optional[Any] = "A"
+    school_name: Optional[Any] = "राजकीय उच्च माध्यमिक विद्यालय"
+    total_questions: Optional[Any] = 10
+    assign_id: Optional[Any] = None
+    question_json: Optional[Any] = []
 
 def make_qr_base64(payload_dict: dict) -> str:
     """QR कोड बनाकर Base64 स्ट्रिंग में बदलता है ताकि HTML में सीधे दिख सके"""
@@ -41,6 +41,33 @@ def make_qr_base64(payload_dict: dict) -> str:
 @app.get("/")
 def root():
     return {"status": "live", "engine": "WeasyPrint Hindi OMR Engine"}
+
+@app.post("/generate-omr-pdf")
+@app.post("/GenerateOMRPdf")
+async def generate_omr_pdf(req: OMRRequest):
+    try:
+        # क्लास का नाम दोनों कीज़ से चेक करना
+        cls_name = str(req.class_name or req.classs_name or "6")
+        
+        # total_questions अगर स्ट्रिंग में आया हो तो int बनाना
+        try:
+            total_q = int(req.total_questions)
+        except:
+            total_q = 10
+
+        # question_json अगर स्ट्रिंग रूप में आया हो तो parse करना
+        questions = req.question_json
+        if isinstance(questions, str):
+            questions = json.loads(questions)
+        if not isinstance(questions, list):
+            questions = []
+            
+        active_questions = questions[:total_q]
+
+
+
+
+
 
 @app.post("/generate-omr-pdf")
 @app.post("/GenerateOMRPdf")
