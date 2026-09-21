@@ -15,7 +15,7 @@ app = FastAPI(title="Dynamic Hindi OMR Generator")
 
 # इनपुट डेटा का स्कीमा
 class OMRRequest(BaseModel):
-    classs_name: str
+    class_name: str
     subject: Optional[str] = "HINDI"
     section: Optional[str] = "A"
     school_name: Optional[str] = "राजकीय उच्च माध्यमिक विद्यालय"
