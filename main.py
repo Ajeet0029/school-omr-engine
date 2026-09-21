@@ -1,407 +1,256 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File
-from fastapi.responses import FileResponse
-from pydantic import BaseModel
-import cv2
-import numpy as np
-from supabase import create_client
 import os
 import io
 import json
+import base64
+from datetime import datetime
+from typing import List, Optional, Any, Dict
+
 import qrcode
-import uuid
-import urllib.request
-import asyncio
-from datetime import datetime
-
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
-from reportlab.lib.utils import ImageReader
-
-
-
-
-
-
-
-import os
-import io
-import uuid
-import json
-from datetime import datetime
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
-from fastapi.middleware.cors import CORSMiddleware
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.lib.utils import ImageReader
-import qrcode
-import urllib.request
+from fastapi.responses import Response
+from pydantic import BaseModel
+from weasyprint import HTML
 
-app = FastAPI(title="School OMR Engine")
+app = FastAPI(title="Dynamic Hindi OMR Generator")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# इनपुट डेटा का स्कीमा
+class OMRRequest(BaseModel):
+    classs_name: str
+    subject: Optional[str] = "HINDI"
+    section: Optional[str] = "A"
+    school_name: Optional[str] = "राजकीय उच्च माध्यमिक विद्यालय"
+    total_questions: Optional[int] = 10
+    assign_id: Optional[str] = None
+    question_json: List[Dict[str, Any]]
 
-PDF_DIR = "/tmp"
-os.makedirs(PDF_DIR, exist_ok=True)
-
-# ----------------- HINDI FONT (STATIC TTF - NO BOXES) -----------------
-FONT_NAME = "HindiFont"
-FONT_PATH = "/tmp/NotoSansDevanagari-Regular.ttf"
-
-if not os.path.exists(FONT_PATH) or os.path.getsize(FONT_PATH) < 10000:
-    try:
-        url = "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf"
-        urllib.request.urlretrieve(url, FONT_PATH)
-        print("Hindi Font downloaded successfully")
-    except Exception as e:
-        print("Font download error:", e)
-
-try:
-    if os.path.exists(FONT_PATH) and os.path.getsize(FONT_PATH) > 10000:
-        pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_PATH))
-    else:
-        FONT_NAME = "Helvetica"
-except Exception:
-    FONT_NAME = "Helvetica"
-
+def make_qr_base64(payload_dict: dict) -> str:
+    """QR कोड बनाकर Base64 स्ट्रिंग में बदलता है ताकि HTML में सीधे दिख सके"""
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=4,
+        border=1,
+    )
+    qr.add_data(json.dumps(payload_dict, ensure_ascii=False))
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode('utf-8')
 
 @app.get("/")
 def root():
-    return {"status": "live", "engine": "OMR Generator"}
+    return {"status": "live", "engine": "WeasyPrint Hindi OMR Engine"}
 
-
-# ==========================================
-# A4 OMR PRINTABLE SHEET GENERATOR
-# ==========================================
-from fastapi import Request
-
-@app.post("/generate-omr-pdf")
-async def generate_omr_pdf(request: Request):
+@app.post("/GenerateOMRPdf")
+async def generate_omr_pdf(req: OMRRequest):
     try:
-        payload = await request.json()
-        school_name = payload.get("school_name", "राजकीय उच्च माध्यमिक विद्यालय")
-        subject = payload.get("subject", "गणित")
-        class_name = payload.get("class_name") or payload.get("classs_name", "6")
-        section = payload.get("section", "A")
-        assignment_id = str(payload.get("assignment_id", "ASG-101"))
-        roll_no = str(payload.get("roll_no", ""))
-        print_date = payload.get("exam_date") or datetime.now().strftime("%d-%b-%Y")
-
-        raw_questions = payload.get("questions", [])
-        if isinstance(raw_questions, str):
-            try:
-                questions = json.loads(raw_questions)
-            except Exception:
-                questions = []
-        elif isinstance(raw_questions, list):
-            questions = raw_questions
-        else:
-            questions = []
-
-        filename = f"omr_{assignment_id}_{uuid.uuid4().hex[:6]}.pdf"
-        file_path = os.path.join(PDF_DIR, filename)
-
-        p = canvas.Canvas(file_path, pagesize=A4)
-        width, height = A4
-
-        # 4 कॉर्नर एंकर मार्कर्स (18x18 pt)
-        anchor_size = 18
-        p.setFillColorRGB(0, 0, 0)
-        p.rect(20, height - 20 - anchor_size, anchor_size, anchor_size, fill=1) # Top-Left
-        p.rect(width - 20 - anchor_size, height - 20 - anchor_size, anchor_size, anchor_size, fill=1) # Top-Right
-        p.rect(20, 20, anchor_size, anchor_size, fill=1) # Bottom-Left
-        p.rect(width - 20 - anchor_size, 20, anchor_size, anchor_size, fill=1) # Bottom-Right
-
-        # ---------------- TOP HEADER ----------------
-        p.setFont(FONT_NAME, 13)
-        p.drawString(50, height - 35, f"{school_name} | Class: {class_name}-{section} ({subject})")
-
-        p.setFont(FONT_NAME, 8)
-        p.drawString(50, height - 48, "निर्देश: सभी प्रश्नों के उत्तर नीचे OMR स्ट्रिप में नीले/काले पेन से गोला भरकर दें।")
-
-        # रोल नंबर बॉक्स
-        p.setFont("Helvetica-Bold", 8.5)
-        p.drawString(340, height - 34, "Name: ____________________")
-        p.drawString(340, height - 48, "Roll No:")
-
-        start_box_x = 385
-        for b in range(4):
-            bx = start_box_x + (b * 14)
-            p.rect(bx, height - 52, 11, 12, stroke=1, fill=0)
-            if roll_no and b < len(roll_no):
-                p.setFont("Helvetica-Bold", 9)
-                p.drawCentredString(bx + 5.5, height - 50, roll_no[b])
-
-        p.setLineWidth(0.8)
-        p.line(45, height - 56, width - 45, height - 56)
-
-        # ---------------- 10 QUESTIONS GRID ----------------
-        col1_x = 50
-        col2_x = 305
-        y_col1 = height - 74
-        y_col2 = height - 74
-
-        for idx in range(10):
-            q_data = questions[idx] if idx < len(questions) and isinstance(questions[idx], dict) else {}
-
-            # सीधे Supabase की फ़ील्ड्स
-            q_text = q_data.get('question_text') or f"प्रश्न {idx+1}"
-            opt_a = q_data.get('opt_a') or "A"
-            opt_b = q_data.get('opt_b') or "B"
-            opt_c = q_data.get('opt_c') or "C"
-            opt_d = q_data.get('opt_d') or "D"
-
-            if idx < 5:
-                cx = col1_x
-                cy = y_col1
-                y_col1 -= 42
-            else:
-                cx = col2_x
-                cy = y_col2
-                y_col2 -= 42
-
-            # सवाल प्रिंट करें
-            p.setFont(FONT_NAME, 8)
-            p.drawString(cx, cy, f"Q{idx+1}. {str(q_text)[:48]}")
-
-            # 4 विकल्प प्रिंट करें
-            p.setFont(FONT_NAME, 7.5)
-            p.drawString(cx + 6, cy - 12, f"(A) {str(opt_a)[:18]}")
-            p.drawString(cx + 120, cy - 12, f"(C) {str(opt_c)[:18]}")
-            p.drawString(cx + 6, cy - 22, f"(B) {str(opt_b)[:18]}")
-            p.drawString(cx + 120, cy - 22, f"(D) {str(opt_d)[:18]}")
-
-        # ---------------- BOTTOM OMR STRIP ----------------
-        p.setLineWidth(1.2)
-        p.line(30, 205, width - 30, 205)
-
-        p.setFont("Helvetica-Bold", 8.5)
-        p.drawString(45, 192, "TEST DETAILS")
-        p.setFont("Helvetica", 8)
-        p.drawString(45, 178, f"Class: {class_name}-{section}")
-        p.drawString(45, 166, f"Subject: {subject}")
-        p.drawString(45, 154, f"Date: {print_date}")
-        p.drawString(45, 142, f"Roll No: {roll_no if roll_no else '____'}")
-
-        # QR Code
-        qr_payload = f"{assignment_id}|{class_name}|{section}|{subject}|{print_date}"
-        qr_img = qrcode.make(qr_payload)
-        qr_buffer = io.BytesIO()
-        qr_img.save(qr_buffer, format="PNG")
-        qr_buffer.seek(0)
-        p.drawImage(ImageReader(qr_buffer), 45, 76, width=56, height=56)
-
-        # Roll No OMR Bubbles
-        p.setFont("Helvetica-Bold", 8.5)
-        p.drawString(125, 192, "ROLL NO")
-        for col_idx in range(2):
-            bx = 135 + (col_idx * 24)
-            for num in range(10):
-                by = 172 - (num * 11)
-                p.circle(bx, by, 4, stroke=1, fill=0)
-                p.setFont("Helvetica", 5.5)
-                p.drawCentredString(bx, by - 2, str(num))
-
-        # 10 Questions Answer Bubbles
-        p.setFont("Helvetica-Bold", 8.5)
-        p.drawString(210, 192, "ANSWER STRIP (Mark One Option Only)")
-
-        for q_no in range(1, 11):
-            strip_col = 210 if q_no <= 5 else 380
-            row_idx = (q_no - 1) % 5
-            oy = 172 - (row_idx * 21)
-
-            p.setFont("Helvetica-Bold", 7.5)
-            p.drawString(strip_col, oy, f"Q{q_no:02d}")
-
-            opts = ['A', 'B', 'C', 'D']
-            for opt_idx, opt_char in enumerate(opts):
-                circle_x = strip_col + 25 + (opt_idx * 18)
-                p.circle(circle_x, oy + 2, 5.5, stroke=1, fill=0)
-                p.setFont("Helvetica", 5.5)
-                p.drawCentredString(circle_x, oy, opt_char)
-
-        p.showPage()
-        p.save()
-
-        direct_pdf_url = f"https://school-omr-engine.onrender.com/download-pdf/{filename}"
-        return {"success": True, "pdf_url": direct_pdf_url, "filename": filename}
-
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/download-pdf/{filename}")
-def download_pdf(filename: str):
-    file_path = os.path.join(PDF_DIR, filename)
-    if os.path.exists(file_path):
-        return FileResponse(path=file_path, filename=filename, media_type='application/pdf')
-    raise HTTPException(status_code=404, detail="File not found")
-
-
-
-
-
-
-
-
-
-
-# ==========================================
-# 2. OMR SCANNING (फ़ाइल अपलोड सपोर्ट)
-# ==========================================
-@app.post("/scan-omr-file")
-async def scan_omr_file(file: UploadFile = File(...)):
-    try:
-        contents = await file.read()
-        arr = np.frombuffer(contents, dtype=np.uint8)
-        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-
-        if img is None:
-            raise HTTPException(status_code=400, detail="Image file corrupted or invalid")
-
-        # QR कोड स्कैनिंग# ==========================================
-
-
-        qr_text, _, _ = qr_detector.detectAndDecode(img)
+        # 1. आज की तारीख (Dynamic Date of Printing)
+        current_date = datetime.now().strftime("%d-%b-%Y")
+        total_q = req.total_questions if req.total_questions in [10, 20] else len(req.question_json)
+        assign_id = req.assign_id or f"TST-{int(datetime.now().timestamp())}"
         
-        if qr_text and "|" in qr_text:
-            parts = qr_text.split("|")
-            assignment_id = parts[0]
-            class_name = parts[1] if len(parts) > 1 else "10"
-            section = parts[2] if len(parts) > 2 else "A"
-            subject = parts[3] if len(parts) > 3 else "General"
-        else:
-            assignment_id = "DEMO-ASG"
-            class_name = "10"
-            section = "A"
-            subject = "General"
-
-        detected_roll_no = 1
-        student_answers = ['A', 'B', 'C', 'D', 'A', 'B', 'C', 'D', 'A', 'B']
-
-        correct_key = student_answers
-        total_marks = 10
-        try:
-            asg = supabase.table("assignments").select("answer_key, total_marks").eq("id", assignment_id).execute()
-            if asg.data:
-                correct_key = asg.data[0].get("answer_key", student_answers)
-                total_marks = asg.data[0].get("total_marks", 10)
-        except Exception:
-            pass
-
-        score = sum(1 for s, c in zip(student_answers, correct_key) if s == c)
-        percentage = (score / total_marks) * 100 if total_marks else 0
-        zone = "green" if percentage >= 75 else ("yellow" if percentage >= 40 else "red")
-
-        student_id = None
-        student_name = f"Student Roll {detected_roll_no}"
-        try:
-            st_res = supabase.table("students").select("id, name").eq("class", class_name).eq("section", section).eq("roll_no", detected_roll_no).execute()
-            if st_res.data:
-                student_id = st_res.data[0].get("id")
-                student_name = st_res.data[0].get("name", student_name)
-        except Exception:
-            pass
-
-        try:
-            supabase.table("test_evaluations").upsert({
-                "assignment_id": assignment_id,
-                "class_name": class_name,
-                "section": section,
-                "subject": subject,
-                "roll_no": detected_roll_no,
-                "student_id": student_id,
-                "score": score,
-                "total_marks": total_marks,
-                "zone": zone
-            }).execute()
-        except Exception:
-            pass
-
-        return {
-            "success": True,
-            "student_name": student_name,
-            "roll_no": detected_roll_no,
-            "class_name": class_name,
-            "section": section,
-            "subject": subject,
-            "score": score,
-            "total_marks": total_marks,
-            "zone": zone
+        # 2. जितने सवाल तय हैं, उतने ही लेना (10 या 20)
+        active_questions = req.question_json[:total_q]
+        
+        # 3. QR कोड के लिए Answer Key तैयार करना (Auto-Checking स्कैनर के लिए)
+        answer_key = {}
+        for idx, q in enumerate(active_questions):
+            ans = q.get('correct_option') or q.get('answer') or q.get('correct_ans') or ''
+            answer_key[str(idx + 1)] = str(ans).strip().upper()
+            
+        qr_payload = {
+            "aid": assign_id,
+            "cls": req.classs_name,
+            "sec": req.section,
+            "sub": req.subject,
+            "total": len(active_questions),
+            "dt": current_date,
+            "keys": answer_key
         }
-
-    except HTTPException as he:
-        raise he
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-
-
-
-
-import traceback
-import fitz  # PyMuPDF
-
-class OMRUrlRequest(BaseModel):
-    image_url: str
-
-
-
-@app.post("/scan-omr")
-async def scan_omr(request_data: OMRUrlRequest):
-    print("Received URL:", request_data.image_url)
-    if not request_data.image_url:
-        raise HTTPException(status_code=400, detail="image_url is required")
-    
-    try:
-        req = urllib.request.Request(
-            request_data.image_url, 
-            headers={'User-Agent': 'Mozilla/5.0'}
-        )
-        with urllib.request.urlopen(req) as response:
-            file_bytes = response.read()
-
-        # 1. यदि फ़ाइल PDF है: सीधे Pixmap से NumPy ऐरे बनाएँ (डिकोडिंग कभी फ़ेल नहीं होगी)
-        if file_bytes.startswith(b"%PDF"):
-            doc = fitz.open(stream=file_bytes, filetype="pdf")
-            page = doc.load_page(0)
-            pix = page.get_pixmap(dpi=150, colorspace=fitz.csRGB)
-            
-            # Pixmap को सीधे OpenCV (BGR) फॉर्मेट में बदलें
-            img = np.frombuffer(pix.samples, dtype=np.uint8).reshape((pix.h, pix.w, 3))
-            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-            
-            # इसे वापस JPG बाइट्स में एनकोड करें ताकि UploadFile को मिल सके
-            _, enc = cv2.imencode(".jpg", img)
-            final_bytes = enc.tobytes()
-        else:
-            # 2. यदि फ़ाइल पहले से ही सामान्य इमेज (JPG/PNG) है
-            nparr = np.frombuffer(file_bytes, np.uint8)
-            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            if img is None:
-                raise ValueError("URL did not return a valid PDF or Image file")
-            final_bytes = file_bytes
-
-        file_obj = io.BytesIO(final_bytes)
-        upload_file = UploadFile(file=file_obj, filename="omr_sheet.jpg")
+        qr_b64 = make_qr_base64(qr_payload)
         
-        return await scan_omr_file(upload_file)
+        # 4. प्रश्नों को दो कॉलमों में बाँटना (बाएँ और दाएँ)
+        half = (len(active_questions) + 1) // 2
+        left_q = active_questions[:half]
+        right_q = active_questions[half:]
+        
+        # 10 vs 20 प्रश्नों के लिए लेआउट डायनामिक स्केलिंग
+        is_20 = total_q > 10
+        q_font_size = "8pt" if is_20 else "9.5pt"
+        opt_font_size = "7.5pt" if is_20 else "8.5pt"
+        q_spacing = "4px" if is_20 else "8px"
+        
+        def render_q_html(questions_list, start_index):
+            html = ""
+            for i, q in enumerate(questions_list):
+                q_num = start_index + i + 1
+                q_text = q.get('question_text') or q.get('question') or ''
+                a = q.get('option_a', '')
+                b = q.get('option_b', '')
+                c = q.get('option_c', '')
+                d = q.get('option_d', '')
+                html += f"""
+                <div class="q-item" style="margin-bottom: {q_spacing};">
+                  <div class="q-title" style="font-size: {q_font_size};">{q_num}. {q_text}</div>
+                  <table class="opt-table" style="font-size: {opt_font_size};">
+                    <tr><td>(A) {a}</td><td>(B) {b}</td></tr>
+                    <tr><td>(C) {c}</td><td>(D) {d}</td></tr>
+                  </table>
+                </div>
+                """
+            return html
+
+        left_html = render_q_html(left_q, 0)
+        right_html = render_q_html(right_q, half)
+        
+        # 5. OMR Answer Strip (10 प्रश्न -> 2 कॉलम, 20 प्रश्न -> 4 कॉलम)
+        rows_per_col = 5
+        total_cols = (total_q + rows_per_col - 1) // rows_per_col
+        omr_cols_html = ""
+        for c in range(total_cols):
+            col_rows = ""
+            for r in range(rows_per_col):
+                q_n = c * rows_per_col + r + 1
+                if q_n <= total_q:
+                    q_str = f"Q0{q_n}" if q_n < 10 else f"Q{q_n}"
+                    col_rows += f"""
+                    <div class="omr-row">
+                      <b>{q_str}</b>
+                      <span class="bubble">A</span>
+                      <span class="bubble">B</span>
+                      <span class="bubble">C</span>
+                      <span class="bubble">D</span>
+                    </div>
+                    """
+            omr_cols_html += f'<td style="padding-right: 12px; vertical-align: top;">{col_rows}</td>'
+        
+        # 6. संपूर्ण HTML टेम्पलेट (शुद्ध हिंदी फॉन्ट Noto Sans Devanagari के साथ)
+        full_html = f"""<!DOCTYPE html>
+        <html lang="hi">
+        <head>
+        <meta charset="utf-8">
+        <style>
+          @page {{
+            size: A4 portrait;
+            margin: 10mm 12mm 8mm 12mm;
+          }}
+          * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+          body {{
+            font-family: 'Noto Sans Devanagari', 'FreeSans', 'DejaVu Sans', sans-serif;
+            color: #111;
+            line-height: 1.25;
+          }}
+          .header-table {{
+            width: 100%;
+            border-bottom: 1.5px solid #222;
+            padding-bottom: 5px;
+            margin-bottom: 8px;
+          }}
+          .header-table td {{ vertical-align: top; }}
+          .inst-text {{ font-size: 8.5pt; color: #222; line-height: 1.3; }}
+          .student-meta {{ font-size: 8.5pt; text-align: right; }}
+          .roll-box {{
+            display: inline-block;
+            border: 1px solid #333;
+            width: 14px;
+            height: 16px;
+            margin-left: 2px;
+            vertical-align: middle;
+          }}
+          .q-container {{ width: 100%; display: table; table-layout: fixed; }}
+          .q-col {{ display: table-cell; width: 49%; vertical-align: top; }}
+          .q-col-gap {{ display: table-cell; width: 2%; }}
+          .q-item {{ page-break-inside: avoid; }}
+          .q-title {{ font-weight: bold; margin-bottom: 2px; }}
+          .opt-table {{ width: 100%; }}
+          .opt-table td {{ width: 50%; padding: 1px 0; }}
+          
+          .bottom-panel {{
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            border-top: 1.5px solid #222;
+            padding-top: 5px;
+            background: white;
+          }}
+          .bottom-table {{ width: 100%; }}
+          .qr-cell {{ width: 62px; vertical-align: middle; }}
+          .details-cell {{ width: 155px; font-size: 7.5pt; line-height: 1.35; padding-left: 6px; vertical-align: middle; }}
+          .divider-cell {{ width: 10px; border-right: 1px solid #ccc; }}
+          .omr-cell {{ padding-left: 10px; vertical-align: middle; }}
+          .omr-strip-title {{ font-size: 7.5pt; font-weight: bold; margin-bottom: 3px; }}
+          .omr-row {{ font-size: 7pt; margin-bottom: 2px; }}
+          .bubble {{
+            display: inline-block;
+            width: 11px;
+            height: 11px;
+            border-radius: 50%;
+            border: 0.8px solid #222;
+            text-align: center;
+            line-height: 10px;
+            font-size: 6pt;
+            font-weight: bold;
+            margin: 0 1px;
+          }}
+        </style>
+        </head>
+        <body>
+          <table class="header-table">
+            <tr>
+              <td style="width: 65%;">
+                <div style="font-weight: bold; font-size: 10pt; margin-bottom: 2px;">{req.school_name}</div>
+                <div class="inst-text"><b>निर्देश:</b> सभी प्रश्नों के उत्तर नीचे OMR स्ट्रिप में नीले/काले बॉलपेन से गोला भरकर दें।</div>
+              </td>
+              <td style="width: 35%;" class="student-meta">
+                <div>Name: __________________________</div>
+                <div style="margin-top: 4px;">
+                  Roll No: 
+                  <span class="roll-box"></span><span class="roll-box"></span><span class="roll-box"></span><span class="roll-box"></span>
+                </div>
+              </td>
+            </tr>
+          </table>
+
+          <div class="q-container">
+            <div class="q-col">{left_html}</div>
+            <div class="q-col-gap"></div>
+            <div class="q-col">{right_html}</div>
+          </div>
+
+          <div class="bottom-panel">
+            <table class="bottom-table">
+              <tr>
+                <td class="qr-cell">
+                  <img src="data:image/png;base64,{qr_b64}" width="58" height="58" />
+                </td>
+                <td class="details-cell">
+                  <b>TEST DETAILS</b><br>
+                  Class: {req.classs_name} - {req.section}<br>
+                  Subject: {req.subject}<br>
+                  Date: {current_date}<br>
+                  <span style="font-size: 6.5pt; color: #555;">ID: {assign_id}</span>
+                </td>
+                <td class="divider-cell"></td>
+                <td class="omr-cell">
+                  <div class="omr-strip-title">ANSWER STRIP (Mark One Option Only)</div>
+                  <table style="border-collapse: collapse;">
+                    <tr>{omr_cols_html}</tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </div>
+        </body>
+        </html>
+        """
+
+        # 7. WeasyPrint से सीधे PDF में कनवर्ट करना
+        pdf_bytes = HTML(string=full_html).write_pdf()
+        return Response(content=pdf_bytes, media_type="application/pdf")
 
     except Exception as e:
-        print("--- OMR SCAN ERROR TRACEBACK ---")
-        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
