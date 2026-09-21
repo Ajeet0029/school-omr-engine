@@ -69,10 +69,7 @@ async def generate_omr_pdf(req: OMRRequest):
 
 
 
-@app.post("/generate-omr-pdf")
-@app.post("/GenerateOMRPdf")
-async def generate_omr_pdf(req: OMRRequest):
-    try:
+
         # 1. आज की तारीख (Dynamic Date of Printing)
         current_date = datetime.now().strftime("%d-%b-%Y")
         total_q = req.total_questions if req.total_questions in [10, 20] else len(req.question_json)
