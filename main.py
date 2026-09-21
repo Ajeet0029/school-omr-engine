@@ -8,10 +8,20 @@ from typing import List, Optional, Any, Dict
 
 import qrcode
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from weasyprint import HTML
 
 app = FastAPI(title="School OMR Engine")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origions=["*"],
+    allow_crediantials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 def make_qr_base64(payload_dict: dict) -> str:
     """QR कोड बनाकर Base64 स्ट्रिंग तैयार करता है"""
