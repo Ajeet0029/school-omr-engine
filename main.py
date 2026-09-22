@@ -28,42 +28,58 @@ app = FastAPI(title="School OMR & Question Engine")
 # =====================================================================
 import os
 import urllib.request
+import re
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
-FONT_NAME = "NotoHindi"
-FONT_BOLD = "NotoHindi-Bold"
+# ------------------ 1. FONT SETUP ------------------
+FONT_NAME = "NotoDevanagari"
+FONT_BOLD = "NotoDevanagari-Bold"
 
 def setup_fonts():
     font_dir = "/tmp/fonts"
     os.makedirs(font_dir, exist_ok=True)
     
-    font_path_regular = os.path.join(font_dir, "NotoSansDevanagari-Regular.ttf")
-    font_path_bold = os.path.join(font_dir, "NotoSansDevanagari-Bold.ttf")
+    font_path_reg = os.path.join(font_dir, "NotoSansDevanagari-Regular.ttf")
+    font_path_bld = os.path.join(font_dir, "NotoSansDevanagari-Bold.ttf")
     
     headers = {'User-Agent': 'Mozilla/5.0'}
-
-    if not os.path.exists(font_path_regular):
-        url_reg = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf"
+    
+    # Google Fonts के आधिकारिक GitHub से सीधे TTF डाउनलोड
+    if not os.path.exists(font_path_reg) or os.path.getsize(font_path_reg) < 1000:
+        url_reg = "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf"
         req = urllib.request.Request(url_reg, headers=headers)
-        with urllib.request.urlopen(req) as resp, open(font_path_regular, 'wb') as f:
+        with urllib.request.urlopen(req) as resp, open(font_path_reg, 'wb') as f:
             f.write(resp.read())
             
-    if not os.path.exists(font_path_bold):
-        url_bld = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Bold.ttf"
+    if not os.path.exists(font_path_bld) or os.path.getsize(font_path_bld) < 1000:
+        url_bld = "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Bold.ttf"
         req = urllib.request.Request(url_bld, headers=headers)
-        with urllib.request.urlopen(req) as resp, open(font_path_bold, 'wb') as f:
+        with urllib.request.urlopen(req) as resp, open(font_path_bld, 'wb') as f:
             f.write(resp.read())
 
-    # UTF-8 देवनागरी सपोर्ट के साथ रजिस्टर करना
-    pdfmetrics.registerFont(TTFont(FONT_NAME, font_path_regular))
-    pdfmetrics.registerFont(TTFont(FONT_BOLD, font_path_bold))
+    pdfmetrics.registerFont(TTFont(FONT_NAME, font_path_reg))
+    pdfmetrics.registerFont(TTFont(FONT_BOLD, font_path_bld))
 
 try:
     setup_fonts()
     print("Devanagari Fonts Loaded Successfully")
 except Exception as e:
     print(f"Font Setup Error: {e}")
+
+# ------------------ 2. HINDI TEXT REORDERING FIXER ------------------
+def fix_hindi_text(text: str) -> str:
+    """
+    ReportLab drawString के लिए 'ि' की मात्रा (\u093F) को व्यंजन से पहले शिफ्ट करता है
+    ताकि मात्रा अक्षर के ऊपर/पहले सही रूप से दिखे और टूटे नहीं।
+    """
+    if not text:
+        return ""
+    text = str(text)
+    pattern = r'((?:[\u0915-\u0939]\u094D)*[\u0915-\u0939])(\u093F)'
+    return re.sub(pattern, r'\2\1', text)
+
+
 
 
 
