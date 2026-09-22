@@ -13,3 +13,4 @@ weasyprint
 jinja2
 reportlab
 pydantic
+requests
