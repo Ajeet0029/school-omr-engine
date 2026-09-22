@@ -249,35 +249,51 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
 # =====================================================================
 # 4. Storage अपलोड एवं मुख्य API
 # =====================================================================
+import requests
+
 def upload_to_supabase(pdf_bytes: bytes, file_name: str) -> str:
+    # 1. Supabase URL को साफ़ करें (ताकि कोई अतिरिक्त स्लैश न रहे)
+    base_url = SUPABASE_URL.rstrip('/')
+    bucket = BUCKET_NAME.strip('/')
     storage_path = f"generated_omrs/{file_name}"
 
-    # Supabase v2.x के लिए सुरक्षित अपलोड
-    try:
-        supabase.storage.from_(BUCKET_NAME).upload(
-            path=storage_path,
-            file=pdf_bytes,
-            file_options={"content-type": "application/pdf", "upsert": "true"}
-        )
-    except Exception as upload_err:
-        print(f"Upload attempt error: {upload_err}")
-        # यदि फ़ाइल पहले से है या हेडर का इश्यू है, आगे बढ़ने का प्रयास करें
+    # 2. REST API के ज़रिए सीधे स्टोरेज में अपलोड
+    upload_endpoint = f"{base_url}/storage/v1/object/{bucket}/{storage_path}"
+    headers = {
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "apiKey": SUPABASE_SERVICE_ROLE_KEY,
+        "Content-Type": "application/pdf",
+        "x-upsert": "true"
+    }
 
-    # 10 मिनट (600 सेकंड) के लिए मान्य Signed URL प्राप्त करें
-    res = supabase.storage.from_(BUCKET_NAME).create_signed_url(
-        path=storage_path,
-        expires_in=600
-    )
+    upload_res = requests.post(upload_endpoint, data=pdf_bytes, headers=headers)
+    
+    if upload_res.status_code not in (200, 201):
+        print(f"Supabase Upload Failed ({upload_res.status_code}): {upload_res.text}")
+        raise ValueError(f"Upload failed: {upload_res.text}")
 
-    if isinstance(res, dict):
-        url = res.get("signedURL") or res.get("signed_url") or res.get("signedUrl")
+    # 3. REST API के ज़रिए 10 मिनट (600 सेकंड) का Signed URL प्राप्त करना
+    sign_endpoint = f"{base_url}/storage/v1/object/sign/{bucket}/{storage_path}"
+    sign_payload = {"expiresIn": 600}
+    
+    sign_res = requests.post(sign_endpoint, json=sign_payload, headers=headers)
+    
+    if sign_res.status_code not in (200, 201):
+        print(f"Signed URL Generation Failed ({sign_res.status_code}): {sign_res.text}")
+        raise ValueError(f"Signed URL creation failed: {sign_res.text}")
+
+    sign_data = sign_res.json()
+    signed_url_path = sign_data.get("signedURL") or sign_data.get("signedUrl")
+    
+    if not signed_url_path:
+        raise ValueError(f"Invalid signed URL response: {sign_data}")
+
+    # अगर रिटर्न पाथ रिलेटिव है तो पूरा URL बनाएँ
+    if signed_url_path.startswith("http"):
+        return signed_url_path
     else:
-        url = getattr(res, "signed_url", None) or getattr(res, "signedURL", None) or str(res)
+        return f"{base_url}/storage/v1{signed_url_path}"
 
-    if not url:
-        raise ValueError("Supabase से Signed URL प्राप्त नहीं हो सका। बकेट का नाम जांचें।")
-
-    return url
 
 
 
