@@ -251,21 +251,34 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
 # =====================================================================
 def upload_to_supabase(pdf_bytes: bytes, file_name: str) -> str:
     storage_path = f"generated_omrs/{file_name}"
-    
-    supabase.storage.from_(BUCKET_NAME).upload(
-        path=storage_path,
-        file=pdf_bytes,
-        file_options={"content-type": "application/pdf"}
-    )
-    
+
+    # Supabase v2.x के लिए सुरक्षित अपलोड
+    try:
+        supabase.storage.from_(BUCKET_NAME).upload(
+            path=storage_path,
+            file=pdf_bytes,
+            file_options={"content-type": "application/pdf", "upsert": "true"}
+        )
+    except Exception as upload_err:
+        print(f"Upload attempt error: {upload_err}")
+        # यदि फ़ाइल पहले से है या हेडर का इश्यू है, आगे बढ़ने का प्रयास करें
+
+    # 10 मिनट (600 सेकंड) के लिए मान्य Signed URL प्राप्त करें
     res = supabase.storage.from_(BUCKET_NAME).create_signed_url(
         path=storage_path,
         expires_in=600
     )
-    
+
     if isinstance(res, dict):
-        return res.get("signedURL") or res.get("signed_url") or res.get("signedUrl")
-    return getattr(res, "signed_url", str(res))
+        url = res.get("signedURL") or res.get("signed_url") or res.get("signedUrl")
+    else:
+        url = getattr(res, "signed_url", None) or getattr(res, "signedURL", None) or str(res)
+
+    if not url:
+        raise ValueError("Supabase से Signed URL प्राप्त नहीं हो सका। बकेट का नाम जांचें।")
+
+    return url
+
 
 
 @app.post("/generate-omr-pdf", dependencies=[Security(verify_api_key)])
