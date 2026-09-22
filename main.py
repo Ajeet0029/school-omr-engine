@@ -186,15 +186,16 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
     c.drawString(45, strip_y - 47, f"Date: {datetime.now().strftime('%d-%b-%Y')}")
     c.drawString(45, strip_y - 57, f"ID: {payload.get('assignment_id', 'T01')}")
 
-    # QR कोड जनरेशन
-    qr = qrcode.QRCode(box_size=1, border=0)
-    qr.add_data(f"ID:{payload.get('assignment_id')}|CLS:{payload.get('class_name')}")
+    # QR कोड जनरेशन (सीधे PIL Image पास करें)
+    qr = qrcode.QRCode(box_size=2, border=0)
+    qr_data = f"ID:{payload.get('assignment_id')}|CLS:{payload.get('class_name')}"
+    qr.add_data(qr_data)
     qr.make(fit=True)
-    qr_img = qr.make_image(fill_color="black", back_color="white")
-    qr_buffer = io.BytesIO()
-    qr_img.save(qr_buffer, format="PNG")
-    qr_buffer.seek(0)
-    c.drawInlineImage(qr_buffer, 45, strip_y - 105, 42, 42)
+    qr_img = qr.make_image(fill_color="black", back_color="white").convert('RGB')
+    
+    # सीधे इमेज ऑब्जेक्ट ड्रा करें
+    c.drawInlineImage(qr_img, 45, strip_y - 105, 42, 42)
+
 
     # 2. रोल नंबर बबल ग्रिड
     roll_x = 135
