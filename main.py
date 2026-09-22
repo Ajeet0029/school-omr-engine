@@ -16,7 +16,7 @@ app = FastAPI(title="School OMR Engine")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origions=["*"],
+    allow_origins=["*"],
     allow_crediantials=True,
     allow_methods=["*"],
     allow_headers=["*"],
