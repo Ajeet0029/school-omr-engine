@@ -26,24 +26,23 @@ app = FastAPI(title="School OMR & Question Engine")
 # =====================================================================
 # 1. हिंदी/देवनागरी फॉन्ट सेटअप (Auto Font Setup)
 # =====================================================================
-FONT_NAME = "NotoSansHindi"
-FONT_BOLD = "NotoSansHindi-Bold"
+FONT_NAME = "FreeSans"
+FONT_BOLD = "FreeSansBold"
 
 def setup_fonts():
-    # हिंदी सपोर्ट के लिए Noto Sans Devanagari फॉन्ट लोड करें
     font_dir = "/tmp/fonts"
     os.makedirs(font_dir, exist_ok=True)
     
-    font_path_regular = os.path.join(font_dir, "NotoSansDevanagari-Regular.ttf")
-    font_path_bold = os.path.join(font_dir, "NotoSansDevanagari-Bold.ttf")
+    font_path_regular = os.path.join(font_dir, "FreeSans.ttf")
+    font_path_bold = os.path.join(font_dir, "FreeSansBold.ttf")
     
-    # अगर फॉन्ट मौजूद नहीं हैं, तो डाउनलोड करें
+    # शुद्ध देवनागरी रेंडरिंग के लिए FreeSans फ़ॉन्ट डाउनलोड करें
     if not os.path.exists(font_path_regular):
-        url_reg = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf"
+        url_reg = "https://raw.githubusercontent.com/dejavu-fonts/dejavu-fonts/master/freefont/FreeSans.ttf"
         urllib.request.urlretrieve(url_reg, font_path_regular)
         
     if not os.path.exists(font_path_bold):
-        url_bld = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Bold.ttf"
+        url_bld = "https://raw.githubusercontent.com/dejavu-fonts/dejavu-fonts/master/freefont/FreeSansBold.ttf"
         urllib.request.urlretrieve(url_bld, font_path_bold)
 
     pdfmetrics.registerFont(TTFont(FONT_NAME, font_path_regular))
@@ -55,6 +54,8 @@ except Exception as e:
     print(f"Font download fallback to Helvetica: {e}")
     FONT_NAME = "Helvetica"
     FONT_BOLD = "Helvetica-Bold"
+
+
 
 
 # =====================================================================
