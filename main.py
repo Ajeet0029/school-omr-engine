@@ -2,6 +2,7 @@ import io
 import os
 import uuid
 import traceback
+import json
 from datetime import datetime
 from typing import List, Optional, Any, Dict
 
@@ -63,7 +64,7 @@ class OMRRequest(BaseModel):
     section: Optional[str] = "A"
     assignment_id: Optional[str] = "TEST-01"
     total_questions: Optional[int] = 50
-    questions: Optional[List[Any]] = []
+    questions: Optional[Any] = []
 
 
 # =====================================================================
@@ -235,8 +236,16 @@ def upload_pdf_and_get_signed_url(pdf_bytes: bytes, file_name: str) -> str:
 )
 async def generate_omr_pdf(request: Request):
     try:
-        raw_json = await request.json()
-        payload = OMRRequest(**raw_json)
+       raw_json = await request.json()
+
+        # अगर questions स्ट्रिंग में आया है तो उसे सही लिस्ट में बदलें
+        if isinstance(raw_json.get("questions"), str):
+            try:
+                raw_json["questions"] = json.loads(raw_json["questions"])
+            except Exception:
+                raw_json["questions"] = []
+
+        payload = OMRRequest(**raw_json) 
 
         # 1. A4 OMR PDF बाइट्स निर्माण
         pdf_bytes = generate_omr_pdf_bytes(payload)
