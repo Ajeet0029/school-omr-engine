@@ -156,50 +156,32 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
     c.line(40, height - 68, width - 40, height - 68)
 
     # ------------------ MIDDLE SECTION (Questions) ------------------
-    raw_questions = payload.get("questions", [])
-    if isinstance(raw_questions, str):
-        try:
-            raw_questions = json.loads(raw_questions)
-        except Exception:
-            raw_questions = []
-
-    total_q = len(raw_questions) if raw_questions else int(payload.get("total_questions", 10) or 10)
-    
-    # दो कॉलम में प्रश्न (बायाँ और दायाँ)
-    col1_x = 42
-    col2_x = (width / 2.0) + 10
-    col_width = (width / 2.0) - 52
-    
-    # 10 प्रश्न होने पर 5-5 दोनों कॉलम में; 20 होने पर 10-10
-    half_q = (total_q + 1) // 2
-    y_start = height - 85
-    line_spacing = 42 if total_q <= 10 else 24  # प्रश्नों की संख्या के अनुसार स्पेसिंग
-
+    # ------------------ MIDDLE SECTION (Questions & Options) ------------------
     for idx in range(total_q):
         q_data = raw_questions[idx] if idx < len(raw_questions) else {}
-        q_text = q_data.get("question_text") or q_data.get("question") or f"प्रश्न संख्या {idx + 1}"
-        opt_a = q_data.get("opt_a") or q_data.get("option_a") or "विकल्प A"
-        opt_b = q_data.get("opt_b") or q_data.get("option_b") or "विकल्प B"
-        opt_c = q_data.get("opt_c") or q_data.get("option_c") or "विकल्प C"
-        opt_d = q_data.get("opt_d") or q_data.get("option_d") or "विकल्प D"
+        q_text = str(q_data.get("question_text") or q_data.get("question") or f"प्रश्न संख्या {idx + 1}")
+        opt_a = str(q_data.get("opt_a") or q_data.get("option_a") or "विकल्प A")
+        opt_b = str(q_data.get("opt_b") or q_data.get("option_b") or "विकल्प B")
+        opt_c = str(q_data.get("opt_c") or q_data.get("option_c") or "विकल्प C")
+        opt_d = str(q_data.get("opt_d") or q_data.get("option_d") or "विकल्प D")
 
         is_col2 = idx >= half_q
         cur_x = col2_x if is_col2 else col1_x
         row_num = idx - half_q if is_col2 else idx
         cur_y = y_start - (row_num * line_spacing)
 
-        # प्रश्न
-        c.setFont(FONT_BOLD, 7.5)
-        # लंबा प्रश्न ट्रंकेट न हो, इसके लिए पहली 50 अक्षर
-        display_q = f"{idx + 1}. {q_text[:55]}"
+        # 1. प्रश्न को fix_hindi_text में पास करें
+        c.setFont(FONT_BOLD, q_font_size)
+        display_q = fix_hindi_text(f"{idx + 1}. {q_text[:50]}")
         c.drawString(cur_x, cur_y, display_q)
 
-        # विकल्प A, B, C, D
-        c.setFont(FONT_NAME, 6.8)
-        c.drawString(cur_x + 8, cur_y - 10, f"(A) {str(opt_a)[:18]}")
-        c.drawString(cur_x + (col_width / 2), cur_y - 10, f"(B) {str(opt_b)[:18]}")
-        c.drawString(cur_x + 8, cur_y - 20, f"(C) {str(opt_c)[:18]}")
-        c.drawString(cur_x + (col_width / 2), cur_y - 20, f"(D) {str(opt_d)[:18]}")
+        # 2. सभी चारों विकल्पों को fix_hindi_text में पास करें
+        c.setFont(FONT_NAME, opt_font_size)
+        c.drawString(cur_x + 8, cur_y - 9, fix_hindi_text(f"(A) {opt_a[:18]}"))
+        c.drawString(cur_x + (col_width / 2), cur_y - 9, fix_hindi_text(f"(B) {opt_b[:18]}"))
+        c.drawString(cur_x + 8, cur_y - 18, fix_hindi_text(f"(C) {opt_c[:18]}"))
+        c.drawString(cur_x + (col_width / 2), cur_y - 18, fix_hindi_text(f"(D) {opt_d[:18]}"))
+
 
     # ------------------ BOTTOM SECTION (OMR Answer Strip) ------------------
     strip_y = 155
