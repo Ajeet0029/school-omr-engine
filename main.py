@@ -5,10 +5,15 @@ import uuid
 import base64
 import urllib.request
 import traceback
+
+
+
+
+
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, Security, HTTPException
+from fastapi import FastAPI, Security, HTTPException, Request
 from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -1577,8 +1582,11 @@ def upload_pdf_to_supabase(
 # ============================================================
 
 class OMRRequest(BaseModel):
-
-    data: Dict[str, Any]
+data:
+Optional[Dict[str, Any]]
+= None
+class Config:
+extra = "allow"
 
 
 # ============================================================
@@ -1639,13 +1647,96 @@ def health():
         Security(verify_api_key)
     ]
 )
-def generate_omr_pdf(
-    request: OMRRequest
+async def generate_omr_pdf(
+    request: Request
 ):
 
     try:
 
-        payload = request.data
+        body = await request.json()
+
+        # FlutterFlow अगर {"data": {...}} भेजता है
+        if (
+            isinstance(body, dict)
+            and isinstance(body.get("data"), dict)
+        ):
+
+            payload = body["data"]
+
+        # FlutterFlow अगर सीधे {...} भेजता है
+        elif isinstance(body, dict):
+
+            payload = body
+
+        else:
+
+            raise HTTPException(
+                status_code=400,
+                detail="Request body must be a JSON object"
+            )
+
+        # Generate PDF
+        pdf_bytes = generate_hybrid_omr_pdf(
+            payload
+        )
+
+        if not pdf_bytes:
+            raise RuntimeError(
+                "PDF generation returned empty data"
+            )
+
+        student_name = clean_text(
+            get_first(
+                payload,
+                "student_name",
+                "studentName",
+                "name",
+                default="student"
+            )
+        )
+
+        safe_filename = "".join(
+            c
+            if c.isalnum() or c in "-_"
+            else "_"
+            for c in student_name
+        )
+
+        if not safe_filename:
+            safe_filename = "student"
+
+        file_name = (
+            safe_filename
+            + "_"
+            + uuid.uuid4().hex[:10]
+            + ".pdf"
+        )
+
+        signed_url = upload_pdf_to_supabase(
+            pdf_bytes,
+            file_name
+        )
+
+        return {
+            "success": True,
+            "file_name": file_name,
+            "file_url": signed_url,
+            "signed_url": signed_url,
+            "size_bytes": len(pdf_bytes)
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
 
         if not isinstance(
             payload,
