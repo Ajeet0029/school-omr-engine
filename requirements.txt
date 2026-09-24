@@ -9,7 +9,7 @@ qrcode [pil]
 pillow
 python-multipart
 PyMuPDF
-weasyprint
+weasyprint==70.0
 jinja2
 reportlab>=4.4.7,<55.0
 uharfbuzz>=0.55.0
