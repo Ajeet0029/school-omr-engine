@@ -184,7 +184,7 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
         c.setFont(FONT_BOLD, 7.5)
         # लंबा प्रश्न ट्रंकेट न हो, इसके लिए पहली 50 अक्षर
         display_q = f"{idx + 1}. {q_text[:55]}"
-        c.drawString(cur_x, cur_y, display_q)
+        c.drawString(cur_x, cur_y, display_q, shaping=True)
 
         # विकल्प A, B, C, D
         c.setFont(FONT_NAME, 6.8)
