@@ -15,7 +15,6 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, Security, HTTPException, Request
 from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 
 from supabase import create_client, Client
 
@@ -1580,8 +1579,7 @@ def upload_pdf_to_supabase(
 # REQUEST MODEL
 # ============================================================
 
-class OMRRequest(BaseModel):
-data:
+
 Optional[Dict[str, Any]]
 = None
 class Config:
@@ -1652,9 +1650,29 @@ async def generate_omr_pdf(
 
     try:
 
+        # ====================================================
+        # READ JSON BODY
+        # ====================================================
+
         body = await request.json()
 
-        # FlutterFlow अगर {"data": {...}} भेजता है
+        # ====================================================
+        # SUPPORT BOTH REQUEST FORMATS
+        #
+        # FORMAT 1:
+        # {
+        #     "data": {
+        #         ...
+        #     }
+        # }
+        #
+        # FORMAT 2:
+        # {
+        #     "school_name": "...",
+        #     "questions": [...]
+        # }
+        # ====================================================
+
         if (
             isinstance(body, dict)
             and isinstance(body.get("data"), dict)
@@ -1662,7 +1680,6 @@ async def generate_omr_pdf(
 
             payload = body["data"]
 
-        # FlutterFlow अगर सीधे {...} भेजता है
         elif isinstance(body, dict):
 
             payload = body
@@ -1674,92 +1691,23 @@ async def generate_omr_pdf(
                 detail="Request body must be a JSON object"
             )
 
-        # Generate PDF
+        # ====================================================
+        # GENERATE PDF
+        # ====================================================
+
         pdf_bytes = generate_hybrid_omr_pdf(
             payload
         )
 
         if not pdf_bytes:
+
             raise RuntimeError(
                 "PDF generation returned empty data"
             )
 
-        student_name = clean_text(
-            get_first(
-                payload,
-                "student_name",
-                "studentName",
-                "name",
-                default="student"
-            )
-        )
-
-        safe_filename = "".join(
-            c
-            if c.isalnum() or c in "-_"
-            else "_"
-            for c in student_name
-        )
-
-        if not safe_filename:
-            safe_filename = "student"
-
-        file_name = (
-            safe_filename
-            + "_"
-            + uuid.uuid4().hex[:10]
-            + ".pdf"
-        )
-
-        signed_url = upload_pdf_to_supabase(
-            pdf_bytes,
-            file_name
-        )
-
-        return {
-            "success": True,
-            "file_name": file_name,
-            "file_url": signed_url,
-            "signed_url": signed_url,
-            "size_bytes": len(pdf_bytes)
-        }
-
-    except HTTPException:
-        raise
-
-    except Exception as e:
-
-        traceback.print_exc()
-
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
-
-
-        if not isinstance(
-            payload,
-            dict
-        ):
-
-            raise HTTPException(
-                status_code=400,
-                detail="data must be an object"
-            )
-
-        # ----------------------------------------------------
-        # GENERATE
-        # ----------------------------------------------------
-
-        pdf_bytes = (
-            generate_hybrid_omr_pdf(
-                payload
-            )
-        )
-
-        # ----------------------------------------------------
+        # ====================================================
         # FILE NAME
-        # ----------------------------------------------------
+        # ====================================================
 
         student_name = clean_text(
             get_first(
@@ -1782,6 +1730,7 @@ async def generate_omr_pdf(
         )
 
         if not safe_filename:
+
             safe_filename = "student"
 
         file_name = (
@@ -1791,16 +1740,18 @@ async def generate_omr_pdf(
             + ".pdf"
         )
 
-        # ----------------------------------------------------
-        # SUPABASE
-        # ----------------------------------------------------
+        # ====================================================
+        # UPLOAD TO SUPABASE
+        # ====================================================
 
-        signed_url = (
-            upload_pdf_to_supabase(
-                pdf_bytes,
-                file_name
-            )
+        signed_url = upload_pdf_to_supabase(
+            pdf_bytes,
+            file_name
         )
+
+        # ====================================================
+        # RESPONSE
+        # ====================================================
 
         return {
 
@@ -1831,6 +1782,7 @@ async def generate_omr_pdf(
             status_code=500,
             detail=str(e)
         )
+
 
 
 # ============================================================
