@@ -53,6 +53,7 @@ app.add_middleware(
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+API_KEY_NAME = "x-api-key"
 APP_API_SECRET_KEY = os.getenv("APP_API_SECRET_KEY")
 
 SUPABASE_PDF_BUCKET = os.getenv(
