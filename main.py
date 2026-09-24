@@ -68,16 +68,7 @@ except Exception as e:
     print(f"Font Setup Error: {e}")
 
 # ------------------ 2. HINDI TEXT REORDERING FIXER ------------------
-def fix_hindi_text(text: str) -> str:
-    """
-    ReportLab drawString के लिए 'ि' की मात्रा (\u093F) को व्यंजन से पहले शिफ्ट करता है
-    ताकि मात्रा अक्षर के ऊपर/पहले सही रूप से दिखे और टूटे नहीं।
-    """
-    if not text:
-        return ""
-    text = str(text)
-    pattern = r'((?:[\u0915-\u0939]\u094D)*[\u0915-\u0939])(\u093F)'
-    return re.sub(pattern, r'\2\1', text)
+
 
 
 
