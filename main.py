@@ -1,7 +1,8 @@
 import os
 import io
-import uuid
 import json
+import uuid
+import base64
 import urllib.request
 import traceback
 from datetime import datetime
@@ -12,18 +13,21 @@ from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from fpdf import FPDF
 from supabase import create_client, Client
+
 import qrcode
+
+from weasyprint import HTML, CSS
+from weasyprint.text.fonts import FontConfiguration
 
 
 # ============================================================
-# APP
+# APPLICATION
 # ============================================================
 
 app = FastAPI(
     title="School OMR PDF API",
-    version="2.0.0"
+    version="3.0.0"
 )
 
 
@@ -48,14 +52,26 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 APP_API_SECRET_KEY = os.getenv("APP_API_SECRET_KEY")
 
+SUPABASE_PDF_BUCKET = os.getenv(
+    "SUPABASE_PDF_BUCKET",
+    "letters"
+)
+
+
 if not SUPABASE_URL:
-    raise RuntimeError("SUPABASE_URL environment variable is missing")
+    raise RuntimeError(
+        "SUPABASE_URL environment variable is missing"
+    )
 
 if not SUPABASE_SERVICE_ROLE_KEY:
-    raise RuntimeError("SUPABASE_SERVICE_ROLE_KEY environment variable is missing")
+    raise RuntimeError(
+        "SUPABASE_SERVICE_ROLE_KEY environment variable is missing"
+    )
 
 if not APP_API_SECRET_KEY:
-    raise RuntimeError("APP_API_SECRET_KEY environment variable is missing")
+    raise RuntimeError(
+        "APP_API_SECRET_KEY environment variable is missing"
+    )
 
 
 # ============================================================
@@ -78,7 +94,10 @@ api_key_header = APIKeyHeader(
 )
 
 
-def verify_api_key(api_key: Optional[str] = Security(api_key_header)):
+def verify_api_key(
+    api_key: Optional[str] = Security(api_key_header)
+):
+
     if not api_key:
         raise HTTPException(
             status_code=401,
@@ -95,7 +114,7 @@ def verify_api_key(api_key: Optional[str] = Security(api_key_header)):
 
 
 # ============================================================
-# FONT
+# FONT SETUP
 # ============================================================
 
 FONT_DIR = "/tmp/fonts"
@@ -123,99 +142,63 @@ BOLD_FONT_URL = (
 )
 
 
-def download_file(url: str, path: str):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+def download_font(
+    url: str,
+    path: str
+):
 
-    if not os.path.exists(path) or os.path.getsize(path) < 10000:
-        urllib.request.urlretrieve(url, path)
+    os.makedirs(
+        os.path.dirname(path),
+        exist_ok=True
+    )
+
+    if not os.path.exists(path):
+
+        urllib.request.urlretrieve(
+            url,
+            path
+        )
 
 
 def ensure_fonts():
-    download_file(
+
+    download_font(
         REGULAR_FONT_URL,
         REGULAR_FONT
     )
 
-    download_file(
+    download_font(
         BOLD_FONT_URL,
         BOLD_FONT
     )
 
     if not os.path.exists(REGULAR_FONT):
-        raise RuntimeError("NotoSansDevanagari-Regular.ttf not found")
+        raise RuntimeError(
+            "NotoSansDevanagari-Regular.ttf missing"
+        )
 
     if not os.path.exists(BOLD_FONT):
-        raise RuntimeError("NotoSansDevanagari-Bold.ttf not found")
+        raise RuntimeError(
+            "NotoSansDevanagari-Bold.ttf missing"
+        )
 
 
 ensure_fonts()
 
 
 # ============================================================
-# PDF CLASS
+# FONT CONFIGURATION
 # ============================================================
 
-class HindiPDF(FPDF):
-
-    def __init__(self):
-        super().__init__(
-            orientation="P",
-            unit="mm",
-            format="A4"
-        )
-
-        # Unicode Devanagari fonts
-        self.add_font(
-            family="NotoDevanagari",
-            style="",
-            fname=REGULAR_FONT
-        )
-
-        self.add_font(
-            family="NotoDevanagari",
-            style="B",
-            fname=BOLD_FONT
-        )
-
-        # ----------------------------------------------------
-        # IMPORTANT:
-        # HarfBuzz text shaping
-        # ----------------------------------------------------
-        #
-        # This is the critical difference from the previous
-        # ReportLab implementation.
-        #
-        # fpdf2 uses HarfBuzz / uharfbuzz for complex scripts.
-        #
-        self.set_text_shaping(
-            use_shaping_engine=True,
-            script="deva",
-            language="hi",
-            direction="ltr"
-        )
-
-        self.set_auto_page_break(
-            auto=False
-        )
-
-        self.set_margins(
-            left=10,
-            top=10,
-            right=10
-        )
-
-        self.set_font(
-            "NotoDevanagari",
-            "",
-            10
-        )
+font_config = FontConfiguration()
 
 
 # ============================================================
-# HELPERS
+# BASIC HELPERS
 # ============================================================
 
 def safe_str(value: Any) -> str:
+
     if value is None:
         return ""
 
@@ -226,280 +209,430 @@ def safe_str(value: Any) -> str:
 
 
 def clean_text(value: Any) -> str:
-    """
-    IMPORTANT:
-    Do NOT manually reorder Devanagari characters here.
 
-    HarfBuzz must receive the original Unicode text.
+    """
+    VERY IMPORTANT:
+
+    Do NOT manually reorder Devanagari characters.
+
+    In particular, do NOT move:
+        ि
+        ी
+        ु
+        ू
+        े
+        ै
+        ो
+        ौ
+
+    Pango + HarfBuzz handles this.
     """
 
     text = safe_str(value)
 
-    # Remove accidental null characters only.
     text = text.replace("\x00", "")
 
     return text.strip()
 
 
-def get_first(data: Dict[str, Any], *keys, default=""):
+def get_first(
+    data: Dict[str, Any],
+    *keys,
+    default=""
+):
+
     for key in keys:
-        if key in data and data[key] is not None:
-            return data[key]
+
+        if key in data:
+
+            value = data[key]
+
+            if value is not None:
+                return value
 
     return default
 
 
-# ============================================================
-# DRAWING HELPERS
-# ============================================================
+def html_escape(
+    text: Any
+) -> str:
 
-def draw_corner_markers(pdf: FPDF):
+    text = clean_text(text)
 
-    pdf.set_draw_color(0, 0, 0)
-    pdf.set_line_width(0.5)
-
-    page_w = 210
-    page_h = 297
-
-    marker = 8
-    margin = 5
-
-    # Top left
-    pdf.line(
-        margin,
-        margin,
-        margin + marker,
-        margin
-    )
-
-    pdf.line(
-        margin,
-        margin,
-        margin,
-        margin + marker
-    )
-
-    # Top right
-    pdf.line(
-        page_w - margin,
-        margin,
-        page_w - margin - marker,
-        margin
-    )
-
-    pdf.line(
-        page_w - margin,
-        margin,
-        page_w - margin,
-        margin + marker
-    )
-
-    # Bottom left
-    pdf.line(
-        margin,
-        page_h - margin,
-        margin + marker,
-        page_h - margin
-    )
-
-    pdf.line(
-        margin,
-        page_h - margin,
-        margin,
-        page_h - margin - marker
-    )
-
-    # Bottom right
-    pdf.line(
-        page_w - margin,
-        page_h - margin,
-        page_w - margin - marker,
-        page_h - margin
-    )
-
-    pdf.line(
-        page_w - margin,
-        page_h - margin,
-        page_w - margin,
-        page_h - margin - marker
-    )
-
-
-def draw_circle(
-    pdf: FPDF,
-    x: float,
-    y: float,
-    radius: float = 2.5
-):
-    pdf.ellipse(
-        x - radius,
-        y - radius,
-        radius * 2,
-        radius * 2
-    )
-
-
-def draw_checkbox(
-    pdf: FPDF,
-    x: float,
-    y: float,
-    size: float = 3.5
-):
-    pdf.rect(
-        x,
-        y,
-        size,
-        size
+    return (
+        text
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#39;")
     )
 
 
 # ============================================================
-# QUESTION TEXT WRAPPING
+# QUESTIONS
 # ============================================================
 
-def draw_question(
-    pdf: FPDF,
-    question_number: int,
-    question_text: str,
-    options: List[str],
-    x: float,
-    y: float,
-    width: float,
-    question_font_size: float = 8.7,
-    option_font_size: float = 7.7,
-    line_height: float = 4.6
-):
+def normalize_questions(
+    payload: Dict[str, Any]
+) -> List[Dict[str, Any]]:
 
-    question_text = clean_text(question_text)
+    raw_questions = get_first(
+        payload,
+        "questions",
+        "question_list",
+        "questionList",
+        default=[]
+    )
 
-    if not question_text:
-        question_text = "प्रश्न उपलब्ध नहीं है।"
+    if isinstance(raw_questions, str):
 
-    # --------------------------------------------------------
-    # Question number
-    # --------------------------------------------------------
+        try:
+            raw_questions = json.loads(
+                raw_questions
+            )
 
-    pdf.set_font(
-        "NotoDevanagari",
+        except Exception:
+
+            raw_questions = []
+
+    if not isinstance(
+        raw_questions,
+        list
+    ):
+        return []
+
+    result = []
+
+    for q in raw_questions:
+
+        if not isinstance(q, dict):
+            continue
+
+        question_text = get_first(
+            q,
+            "question",
+            "question_text",
+            "questionText",
+            "text",
+            default=""
+        )
+
+        raw_options = get_first(
+            q,
+            "options",
+            "option",
+            "choices",
+            default=[]
+        )
+
+        if isinstance(
+            raw_options,
+            str
+        ):
+
+            try:
+
+                parsed = json.loads(
+                    raw_options
+                )
+
+                if isinstance(
+                    parsed,
+                    list
+                ):
+                    raw_options = parsed
+
+                else:
+                    raw_options = [
+                        raw_options
+                    ]
+
+            except Exception:
+
+                if "|" in raw_options:
+
+                    raw_options = (
+                        raw_options.split("|")
+                    )
+
+                else:
+
+                    raw_options = [
+                        raw_options
+                    ]
+
+        if not isinstance(
+            raw_options,
+            list
+        ):
+            raw_options = []
+
+        options = []
+
+        for option in raw_options[:4]:
+
+            options.append(
+                clean_text(option)
+            )
+
+        result.append(
+            {
+                "question": clean_text(
+                    question_text
+                ),
+                "options": options
+            }
+        )
+
+    return result
+
+
+# ============================================================
+# QR CODE
+# ============================================================
+
+def create_qr_base64(
+    data: str
+) -> str:
+
+    if not data:
+        return ""
+
+    qr = qrcode.QRCode(
+        version=2,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=6,
+        border=2
+    )
+
+    qr.add_data(data)
+
+    qr.make(
+        fit=True
+    )
+
+    image = qr.make_image(
+        fill_color="black",
+        back_color="white"
+    )
+
+    output = io.BytesIO()
+
+    image.save(
+        output,
+        format="PNG"
+    )
+
+    encoded = base64.b64encode(
+        output.getvalue()
+    ).decode("ascii")
+
+    return (
+        "data:image/png;base64,"
+        + encoded
+    )
+
+
+# ============================================================
+# HTML QUESTION
+# ============================================================
+
+def question_html(
+    number: int,
+    question: Dict[str, Any]
+) -> str:
+
+    text = question.get(
+        "question",
+        ""
+    )
+
+    text = clean_text(text)
+
+    if not text:
+
+        text = "प्रश्न उपलब्ध नहीं है।"
+
+    options = question.get(
+        "options",
+        []
+    )
+
+    option_labels = [
+        "A",
         "B",
-        question_font_size
-    )
+        "C",
+        "D"
+    ]
 
-    pdf.set_xy(x, y)
+    option_blocks = []
 
-    pdf.cell(
-        8,
-        line_height,
-        text=f"{question_number}.",
-        border=0
-    )
+    for i, option in enumerate(
+        options[:4]
+    ):
 
-    # --------------------------------------------------------
-    # Question body
-    # --------------------------------------------------------
-
-    body_x = x + 7
-    body_w = width - 7
-
-    pdf.set_font(
-        "NotoDevanagari",
-        "",
-        question_font_size
-    )
-
-    pdf.set_xy(body_x, y)
-
-    # Multi-cell performs Unicode text shaping through
-    # fpdf2/HarfBuzz.
-    pdf.multi_cell(
-        body_w,
-        line_height,
-        text=question_text,
-        border=0,
-        align="L"
-    )
-
-    current_y = pdf.get_y()
-
-    # --------------------------------------------------------
-    # Options
-    # --------------------------------------------------------
-
-    if not options:
-        return current_y + 2
-
-    option_labels = ["(A)", "(B)", "(C)", "(D)"]
-
-    pdf.set_font(
-        "NotoDevanagari",
-        "",
-        option_font_size
-    )
-
-    option_y = current_y + 0.5
-
-    # Two-column options
-    col_gap = 3
-    option_w = (width - col_gap) / 2
-
-    row = 0
-
-    for i, option in enumerate(options[:4]):
-
-        option = clean_text(option)
-
-        if not option:
-            option = ""
-
-        col = i % 2
-
-        if col == 0 and i > 0:
-            row += 1
-
-        ox = x + col * (option_w + col_gap)
-        oy = option_y + row * 4.2
+        option = clean_text(
+            option
+        )
 
         label = option_labels[i]
 
-        pdf.set_xy(
-            ox,
-            oy
+        option_blocks.append(
+            f"""
+            <div class="option">
+                <span class="option-label">
+                    ({label})
+                </span>
+                <span class="option-text">
+                    {html_escape(option)}
+                </span>
+            </div>
+            """
         )
 
-        pdf.cell(
-            9,
-            4,
-            text=label,
-            border=0
-        )
+    options_html = "".join(
+        option_blocks
+    )
 
-        pdf.set_xy(
-            ox + 8,
-            oy
-        )
+    return f"""
+    <div class="question">
+        <div class="question-line">
+            <span class="question-number">
+                {number}.
+            </span>
 
-        # Small width so long Hindi options wrap.
-        pdf.multi_cell(
-            option_w - 8,
-            4,
-            text=option,
-            border=0,
-            align="L"
-        )
+            <span class="question-text">
+                {html_escape(text)}
+            </span>
+        </div>
 
-    return option_y + (row + 1) * 4.2 + 1.5
+        <div class="options">
+            {options_html}
+        </div>
+    </div>
+    """
 
 
 # ============================================================
-# HEADER
+# OMR HTML
 # ============================================================
 
-def draw_header(
-    pdf: FPDF,
-    payload: Dict[str, Any]
-):
+def omr_row_html(
+    number: int
+) -> str:
 
-    pdf.set_text_color(0, 0, 0)
+    return f"""
+    <div class="omr-row">
+
+        <span class="omr-number">
+            {number}
+        </span>
+
+        <span class="bubble">
+            A
+        </span>
+
+        <span class="bubble">
+            B
+        </span>
+
+        <span class="bubble">
+            C
+        </span>
+
+        <span class="bubble">
+            D
+        </span>
+
+    </div>
+    """
+
+
+def build_omr_html(
+    count: int
+) -> str:
+
+    count = min(
+        count,
+        30
+    )
+
+    if count <= 0:
+        return ""
+
+    columns = [
+        [],
+        [],
+        []
+    ]
+
+    per_column = (
+        count + 2
+    ) // 3
+
+    for index in range(
+        count
+    ):
+
+        column = min(
+            index // per_column,
+            2
+        )
+
+        columns[column].append(
+            index + 1
+        )
+
+    html_columns = []
+
+    for column in columns:
+
+        rows = []
+
+        for number in column:
+
+            rows.append(
+                omr_row_html(
+                    number
+                )
+            )
+
+        html_columns.append(
+            f"""
+            <div class="omr-column">
+                {"".join(rows)}
+            </div>
+            """
+        )
+
+    return f"""
+    <div class="omr-box">
+
+        <div class="omr-title">
+            उत्तर पत्रक (OMR)
+        </div>
+
+        <div class="omr-instruction">
+            सही उत्तर के सामने दिए गए गोले को पेन से पूरी तरह भरें।
+        </div>
+
+        <div class="omr-columns">
+            {"".join(html_columns)}
+        </div>
+
+    </div>
+    """
+
+
+# ============================================================
+# COMPLETE HTML
+# ============================================================
+
+def build_pdf_html(
+    payload: Dict[str, Any],
+    qr_data_uri: str
+) -> str:
 
     school_name = clean_text(
         get_first(
@@ -542,95 +675,14 @@ def draw_header(
         )
     )
 
-    pdf.set_font(
-        "NotoDevanagari",
-        "B",
-        15
-    )
-
-    pdf.set_xy(10, 11)
-
-    pdf.cell(
-        190,
-        7,
-        text=school_name,
-        border=0,
-        align="C"
-    )
-
-    pdf.set_font(
-        "NotoDevanagari",
-        "B",
-        11
-    )
-
-    pdf.set_xy(10, 19)
-
-    pdf.cell(
-        190,
-        6,
-        text=exam_name,
-        border=0,
-        align="C"
-    )
-
-    pdf.set_font(
-        "NotoDevanagari",
-        "",
-        8.5
-    )
-
-    pdf.set_xy(10, 27)
-
-    details = []
-
-    if class_name:
-        details.append(f"कक्षा: {class_name}")
-
-    if subject:
-        details.append(f"विषय: {subject}")
-
-    date_value = get_first(
-        payload,
-        "date",
-        "exam_date",
-        "examDate",
-        default=""
-    )
-
-    if date_value:
-        details.append(
-            f"दिनांक: {clean_text(date_value)}"
+    exam_date = clean_text(
+        get_first(
+            payload,
+            "date",
+            "exam_date",
+            "examDate",
+            default=""
         )
-
-    pdf.cell(
-        190,
-        5,
-        text="    ".join(details),
-        border=0,
-        align="C"
-    )
-
-
-# ============================================================
-# STUDENT DETAILS
-# ============================================================
-
-def draw_student_details(
-    pdf: FPDF,
-    payload: Dict[str, Any]
-):
-
-    y = 35
-
-    pdf.set_draw_color(0, 0, 0)
-    pdf.set_line_width(0.35)
-
-    pdf.rect(
-        10,
-        y,
-        190,
-        17
     )
 
     student_name = clean_text(
@@ -662,562 +714,765 @@ def draw_student_details(
         )
     )
 
-    pdf.set_font(
-        "NotoDevanagari",
-        "B",
-        8.5
+    questions = normalize_questions(
+        payload
     )
 
-    pdf.set_xy(13, y + 3)
-
-    pdf.cell(
-        30,
-        5,
-        text="विद्यार्थी का नाम:"
-    )
-
-    pdf.set_font(
-        "NotoDevanagari",
-        "",
-        8.5
-    )
-
-    pdf.set_xy(42, y + 3)
-
-    pdf.cell(
-        70,
-        5,
-        text=student_name
-    )
-
-    pdf.set_font(
-        "NotoDevanagari",
-        "B",
-        8.5
-    )
-
-    pdf.set_xy(118, y + 3)
-
-    pdf.cell(
-        20,
-        5,
-        text="अनुक्रमांक:"
-    )
-
-    pdf.set_font(
-        "NotoDevanagari",
-        "",
-        8.5
-    )
-
-    pdf.set_xy(140, y + 3)
-
-    pdf.cell(
-        25,
-        5,
-        text=roll_number
-    )
-
-    pdf.set_font(
-        "NotoDevanagari",
-        "B",
-        8.5
-    )
-
-    pdf.set_xy(168, y + 3)
-
-    pdf.cell(
-        15,
-        5,
-        text="सेक्शन:"
-    )
-
-    pdf.set_font(
-        "NotoDevanagari",
-        "",
-        8.5
-    )
-
-    pdf.set_xy(184, y + 3)
-
-    pdf.cell(
-        12,
-        5,
-        text=section
-    )
-
-    # Signature line
-    pdf.set_font(
-        "NotoDevanagari",
-        "",
-        7.5
-    )
-
-    pdf.set_xy(13, y + 10)
-
-    pdf.cell(
-        170,
-        4,
-        text="हस्ताक्षर: ________________________________________________"
-    )
-
-
-# ============================================================
-# QUESTIONS
-# ============================================================
-
-def normalize_questions(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
-
-    raw_questions = get_first(
-        payload,
-        "questions",
-        "question_list",
-        "questionList",
-        default=[]
-    )
-
-    if isinstance(raw_questions, str):
-
-        try:
-            raw_questions = json.loads(raw_questions)
-        except Exception:
-            raw_questions = []
-
-    if not isinstance(raw_questions, list):
-        return []
-
-    result = []
-
-    for q in raw_questions:
-
-        if not isinstance(q, dict):
-            continue
-
-        question_text = get_first(
-            q,
-            "question",
-            "question_text",
-            "questionText",
-            "text",
-            default=""
-        )
-
-        raw_options = get_first(
-            q,
-            "options",
-            "option",
-            "choices",
-            default=[]
-        )
-
-        if isinstance(raw_options, str):
-
-            try:
-                parsed = json.loads(raw_options)
-
-                if isinstance(parsed, list):
-                    raw_options = parsed
-                else:
-                    raw_options = [raw_options]
-
-            except Exception:
-
-                # If options are pipe separated
-                if "|" in raw_options:
-                    raw_options = raw_options.split("|")
-                else:
-                    raw_options = [raw_options]
-
-        if not isinstance(raw_options, list):
-            raw_options = []
-
-        options = [
-            clean_text(x)
-            for x in raw_options
-        ]
-
-        result.append(
-            {
-                "question": clean_text(question_text),
-                "options": options[:4]
-            }
-        )
-
-    return result
-
-
-# ============================================================
-# OMR ANSWER AREA
-# ============================================================
-
-def draw_omr(
-    pdf: FPDF,
-    payload: Dict[str, Any],
-    y: float
-):
-
-    questions = normalize_questions(payload)
-
-    if not questions:
-        return
-
-    # Prevent overflow
-    remaining = min(
-        len(questions),
-        30
-    )
-
-    pdf.set_draw_color(0, 0, 0)
-    pdf.set_line_width(0.35)
-
-    box_h = 38
-
-    if y + box_h > 288:
-        y = 250
-
-    pdf.rect(
-        10,
-        y,
-        190,
-        box_h
-    )
-
-    pdf.set_font(
-        "NotoDevanagari",
-        "B",
-        8
-    )
-
-    pdf.set_xy(13, y + 3)
-
-    pdf.cell(
-        30,
-        4,
-        text="उत्तर पत्रक (OMR)"
-    )
-
-    pdf.set_font(
-        "NotoDevanagari",
-        "",
-        6.5
-    )
-
-    pdf.set_xy(13, y + 8)
-
-    pdf.cell(
-        175,
-        4,
-        text="सही उत्तर के सामने दिए गए गोले को पेन से पूरी तरह भरें।"
-    )
-
-    start_y = y + 15
-
-    # 3 columns
-    columns = 3
-
-    per_column = (remaining + columns - 1) // columns
-
-    col_width = 61
-
-    for col in range(columns):
-
-        start_index = col * per_column
-        end_index = min(
-            start_index + per_column,
-            remaining
-        )
-
-        x = 13 + col * col_width
-
-        for idx in range(
-            start_index,
-            end_index
-        ):
-
-            q_no = idx + 1
-
-            row = idx - start_index
-
-            cy = start_y + row * 6.2
-
-            pdf.set_font(
-                "NotoDevanagari",
-                "",
-                6.8
+    # --------------------------------------------------------
+    # Split questions into two columns
+    # --------------------------------------------------------
+
+    left_questions = []
+    right_questions = []
+
+    for index, question in enumerate(
+        questions
+    ):
+
+        if index % 2 == 0:
+
+            left_questions.append(
+                question_html(
+                    index + 1,
+                    question
+                )
             )
 
-            pdf.set_xy(
-                x,
-                cy - 2
+        else:
+
+            right_questions.append(
+                question_html(
+                    index + 1,
+                    question
+                )
             )
 
-            pdf.cell(
-                8,
-                4,
-                text=str(q_no)
-            )
+    # --------------------------------------------------------
+    # HTML
+    # --------------------------------------------------------
 
-            letters = ["A", "B", "C", "D"]
+    qr_html = ""
 
-            for j, letter in enumerate(letters):
+    if qr_data_uri:
 
-                cx = x + 10 + j * 10
+        qr_html = f"""
+        <img
+            class="qr"
+            src="{qr_data_uri}"
+        />
+        """
 
-                draw_circle(
-                    pdf,
-                    cx,
-                    cy,
-                    2.1
-                )
+    html = f"""
+<!DOCTYPE html>
 
-                pdf.set_font(
-                    "NotoDevanagari",
-                    "",
-                    5.5
-                )
+<html lang="hi">
 
-                pdf.set_xy(
-                    cx - 1.5,
-                    cy - 1.8
-                )
+<head>
 
-                pdf.cell(
-                    3,
-                    3,
-                    text=letter,
-                    align="C"
-                )
+<meta charset="UTF-8">
+
+<style>
+
+@page {{
+    size: A4;
+    margin: 0;
+}}
+
+* {{
+    box-sizing: border-box;
+}}
+
+html,
+body {{
+    margin: 0;
+    padding: 0;
+}}
+
+body {{
+
+    font-family:
+        "NotoSansDevanagari",
+        sans-serif;
+
+    font-weight: 400;
+
+    color: #000;
+
+    width: 210mm;
+    height: 297mm;
+
+    font-size: 9pt;
+
+    line-height: 1.35;
+
+    -webkit-font-smoothing: antialiased;
+}}
+
+
+/* =========================================================
+   PAGE
+   ========================================================= */
+
+.page {{
+
+    position: relative;
+
+    width: 210mm;
+    height: 297mm;
+
+    padding:
+        10mm
+        10mm
+        8mm
+        10mm;
+
+    overflow: hidden;
+}}
+
+
+/* =========================================================
+   CORNER MARKERS
+   ========================================================= */
+
+.marker {{
+    position: absolute;
+
+    width: 8mm;
+    height: 8mm;
+
+    border-color: #000;
+
+    border-style: solid;
+
+    border-width: 0;
+}}
+
+.marker.tl {{
+    left: 5mm;
+    top: 5mm;
+
+    border-left-width: 0.5mm;
+    border-top-width: 0.5mm;
+}}
+
+.marker.tr {{
+    right: 5mm;
+    top: 5mm;
+
+    border-right-width: 0.5mm;
+    border-top-width: 0.5mm;
+}}
+
+.marker.bl {{
+    left: 5mm;
+    bottom: 5mm;
+
+    border-left-width: 0.5mm;
+    border-bottom-width: 0.5mm;
+}}
+
+.marker.br {{
+    right: 5mm;
+    bottom: 5mm;
+
+    border-right-width: 0.5mm;
+    border-bottom-width: 0.5mm;
+}}
+
+
+/* =========================================================
+   HEADER
+   ========================================================= */
+
+.header {{
+    text-align: center;
+}}
+
+.school-name {{
+
+    font-family:
+        "NotoSansDevanagari",
+        sans-serif;
+
+    font-weight: 700;
+
+    font-size: 15pt;
+
+    line-height: 1.25;
+
+    margin: 0;
+
+    padding: 0;
+}}
+
+.exam-name {{
+
+    font-weight: 700;
+
+    font-size: 11pt;
+
+    margin-top: 1mm;
+}}
+
+.exam-details {{
+
+    font-size: 8.5pt;
+
+    margin-top: 1.5mm;
+}}
+
+
+/* =========================================================
+   STUDENT BOX
+   ========================================================= */
+
+.student-box {{
+
+    margin-top: 2mm;
+
+    height: 17mm;
+
+    border:
+        0.35mm
+        solid
+        #000;
+
+    padding: 2.5mm 3mm;
+}}
+
+.student-row {{
+
+    width: 100%;
+
+    display: table;
+
+    table-layout: fixed;
+}}
+
+.student-cell {{
+
+    display: table-cell;
+
+    vertical-align: middle;
+
+    font-size: 8.5pt;
+}}
+
+.student-label {{
+    font-weight: 700;
+}}
+
+.student-name {{
+    width: 52%;
+}}
+
+.roll {{
+    width: 23%;
+}}
+
+.section {{
+    width: 25%;
+}}
+
+.signature {{
+    margin-top: 1.5mm;
+
+    font-size: 7.5pt;
+}}
+
+
+/* =========================================================
+   QUESTION AREA
+   ========================================================= */
+
+.question-area {{
+
+    margin-top: 4mm;
+
+    height: 181mm;
+
+    display: table;
+
+    width: 100%;
+
+    table-layout: fixed;
+}}
+
+.question-column {{
+
+    display: table-cell;
+
+    vertical-align: top;
+
+    width: 50%;
+
+    padding-right: 4mm;
+}}
+
+.question-column.right {{
+
+    padding-left: 4mm;
+
+    padding-right: 0;
+}}
+
+.question {{
+
+    page-break-inside: avoid;
+
+    break-inside: avoid;
+
+    margin-bottom: 3.2mm;
+}}
+
+.question-line {{
+
+    display: block;
+
+    font-size: 8.7pt;
+
+    line-height: 1.35;
+
+    text-align: left;
+}}
+
+.question-number {{
+
+    font-weight: 700;
+
+    display: inline;
+}}
+
+.question-text {{
+
+    display: inline;
+
+    font-weight: 400;
+}}
+
+
+/* =========================================================
+   OPTIONS
+   ========================================================= */
+
+.options {{
+
+    margin-top: 1mm;
+
+    display: table;
+
+    width: 100%;
+
+    table-layout: fixed;
+}}
+
+.option {{
+
+    display: table-cell;
+
+    width: 50%;
+
+    padding-right: 2mm;
+
+    vertical-align: top;
+
+    font-size: 7.7pt;
+
+    line-height: 1.3;
+}}
+
+.option:nth-child(n+3) {{
+
+    display: table-row;
+}}
+
+.option-label {{
+
+    font-weight: 400;
+
+    margin-right: 1mm;
+}}
+
+.option-text {{
+    font-weight: 400;
+}}
+
+
+/* =========================================================
+   OMR
+   ========================================================= */
+
+.omr-box {{
+
+    position: absolute;
+
+    left: 10mm;
+
+    right: 10mm;
+
+    bottom: 10mm;
+
+    height: 39mm;
+
+    border:
+        0.35mm
+        solid
+        #000;
+
+    padding:
+        2.5mm
+        3mm;
+}}
+
+.omr-title {{
+
+    font-weight: 700;
+
+    font-size: 8pt;
+
+    line-height: 1.2;
+}}
+
+.omr-instruction {{
+
+    font-size: 6.5pt;
+
+    margin-top: 1mm;
+}}
+
+.omr-columns {{
+
+    display: table;
+
+    width: 100%;
+
+    table-layout: fixed;
+
+    margin-top: 1.5mm;
+}}
+
+.omr-column {{
+
+    display: table-cell;
+
+    width: 33.33%;
+
+    vertical-align: top;
+}}
+
+.omr-row {{
+
+    height: 5.5mm;
+
+    line-height: 5.5mm;
+
+    white-space: nowrap;
+}}
+
+.omr-number {{
+
+    display: inline-block;
+
+    width: 7mm;
+
+    font-size: 6.8pt;
+}}
+
+.bubble {{
+
+    display: inline-block;
+
+    width: 5mm;
+    height: 5mm;
+
+    border:
+        0.35mm
+        solid
+        #000;
+
+    border-radius: 50%;
+
+    text-align: center;
+
+    line-height: 4.3mm;
+
+    font-size: 5.5pt;
+
+    margin-right: 3mm;
+
+    vertical-align: middle;
+}}
+
+
+/* =========================================================
+   QR
+   ========================================================= */
+
+.qr {{
+
+    position: absolute;
+
+    right: 14mm;
+
+    bottom: 13mm;
+
+    width: 22mm;
+
+    height: 22mm;
+}}
+
+
+/* =========================================================
+   FOOTER
+   ========================================================= */
+
+.footer {{
+
+    position: absolute;
+
+    left: 10mm;
+
+    right: 10mm;
+
+    bottom: 5mm;
+
+    text-align: center;
+
+    font-size: 6.5pt;
+}}
+
+</style>
+
+<style>
+
+@font-face {{
+
+    font-family:
+        "NotoSansDevanagari";
+
+    src:
+        url("file://{REGULAR_FONT}");
+
+    font-style:
+        normal;
+
+    font-weight:
+        400;
+}}
+
+@font-face {{
+
+    font-family:
+        "NotoSansDevanagari";
+
+    src:
+        url("file://{BOLD_FONT}");
+
+    font-style:
+        normal;
+
+    font-weight:
+        700;
+}}
+
+</style>
+
+</head>
+
+
+<body>
+
+<div class="page">
+
+
+    <!-- CORNER MARKERS -->
+
+    <div class="marker tl"></div>
+    <div class="marker tr"></div>
+    <div class="marker bl"></div>
+    <div class="marker br"></div>
+
+
+    <!-- HEADER -->
+
+    <div class="header">
+
+        <div class="school-name">
+            {html_escape(school_name)}
+        </div>
+
+        <div class="exam-name">
+            {html_escape(exam_name)}
+        </div>
+
+        <div class="exam-details">
+
+            {"कक्षा: " + html_escape(class_name)
+                if class_name else ""}
+
+            {"&nbsp;&nbsp;&nbsp;&nbsp;"
+                if class_name and subject else ""}
+
+            {"विषय: " + html_escape(subject)
+                if subject else ""}
+
+            {"&nbsp;&nbsp;&nbsp;&nbsp;"
+                if (class_name or subject) and exam_date else ""}
+
+            {"दिनांक: " + html_escape(exam_date)
+                if exam_date else ""}
+
+        </div>
+
+    </div>
+
+
+    <!-- STUDENT DETAILS -->
+
+    <div class="student-box">
+
+        <div class="student-row">
+
+            <div class="student-cell student-name">
+
+                <span class="student-label">
+                    विद्यार्थी का नाम:
+                </span>
+
+                {html_escape(student_name)}
+
+            </div>
+
+
+            <div class="student-cell roll">
+
+                <span class="student-label">
+                    अनुक्रमांक:
+                </span>
+
+                {html_escape(roll_number)}
+
+            </div>
+
+
+            <div class="student-cell section">
+
+                <span class="student-label">
+                    सेक्शन:
+                </span>
+
+                {html_escape(section)}
+
+            </div>
+
+        </div>
+
+
+        <div class="signature">
+
+            हस्ताक्षर:
+            ________________________________________________
+
+        </div>
+
+    </div>
+
+
+    <!-- QUESTIONS -->
+
+    <div class="question-area">
+
+        <div class="question-column">
+
+            {"".join(left_questions)}
+
+        </div>
+
+
+        <div class="question-column right">
+
+            {"".join(right_questions)}
+
+        </div>
+
+    </div>
+
+
+    <!-- OMR -->
+
+    {build_omr_html(len(questions))}
+
+
+    <!-- QR -->
+
+    {qr_html}
+
+
+    <!-- FOOTER -->
+
+    <div class="footer">
+
+        यह दस्तावेज़ स्वचालित रूप से तैयार किया गया है।
+
+    </div>
+
+
+</div>
+
+</body>
+
+</html>
+"""
+
+    return html
 
 
 # ============================================================
-# QR CODE
-# ============================================================
-
-def make_qr_image(
-    data: str
-) -> io.BytesIO:
-
-    qr = qrcode.QRCode(
-        version=2,
-        error_correction=qrcode.constants.ERROR_CORRECT_M,
-        box_size=6,
-        border=2
-    )
-
-    qr.add_data(data)
-
-    qr.make(
-        fit=True
-    )
-
-    image = qr.make_image(
-        fill_color="black",
-        back_color="white"
-    )
-
-    output = io.BytesIO()
-
-    image.save(
-        output,
-        format="PNG"
-    )
-
-    output.seek(0)
-
-    return output
-
-
-def draw_qr(
-    pdf: FPDF,
-    payload: Dict[str, Any]
-):
-
-    qr_data = get_first(
-        payload,
-        "qr_data",
-        "qrData",
-        "student_id",
-        "studentId",
-        default=""
-    )
-
-    if not qr_data:
-        return
-
-    qr_buffer = make_qr_image(
-        clean_text(qr_data)
-    )
-
-    # fpdf2 can accept a BytesIO image object
-    pdf.image(
-        qr_buffer,
-        x=174,
-        y=257,
-        w=22,
-        h=22
-    )
-
-
-# ============================================================
-# PDF GENERATOR
+# PDF GENERATION
 # ============================================================
 
 def generate_hybrid_omr_pdf(
     payload: Dict[str, Any]
 ) -> bytes:
 
-    pdf = HindiPDF()
-
-    pdf.add_page()
-
-    # --------------------------------------------------------
-    # Corner markers
-    # --------------------------------------------------------
-
-    draw_corner_markers(pdf)
-
-    # --------------------------------------------------------
-    # Header
-    # --------------------------------------------------------
-
-    draw_header(
-        pdf,
-        payload
-    )
-
-    # --------------------------------------------------------
-    # Student details
-    # --------------------------------------------------------
-
-    draw_student_details(
-        pdf,
-        payload
-    )
-
-    # --------------------------------------------------------
-    # Questions
-    # --------------------------------------------------------
-
-    questions = normalize_questions(
-        payload
-    )
-
-    question_y = 58
-
-    left_x = 11
-    right_x = 106
-
-    column_width = 93
-
-    left_questions = questions[::2]
-    right_questions = questions[1::2]
-
-    max_question_y = 245
-
-    # Left column
-    y_left = question_y
-
-    for index, q in enumerate(left_questions):
-
-        y_before = y_left
-
-        y_left = draw_question(
-            pdf=pdf,
-            question_number=index * 2 + 1,
-            question_text=q["question"],
-            options=q["options"],
-            x=left_x,
-            y=y_left,
-            width=column_width
+    qr_data = clean_text(
+        get_first(
+            payload,
+            "qr_data",
+            "qrData",
+            "student_id",
+            "studentId",
+            default=""
         )
+    )
 
-        # Safety against excessive content
-        if y_left > max_question_y:
-            break
+    qr_data_uri = create_qr_base64(
+        qr_data
+    )
 
-    # Right column
-    y_right = question_y
-
-    for index, q in enumerate(right_questions):
-
-        y_before = y_right
-
-        y_right = draw_question(
-            pdf=pdf,
-            question_number=index * 2 + 2,
-            question_text=q["question"],
-            options=q["options"],
-            x=right_x,
-            y=y_right,
-            width=column_width
-        )
-
-        if y_right > max_question_y:
-            break
-
-    # --------------------------------------------------------
-    # OMR
-    # --------------------------------------------------------
-
-    omr_y = 248
-
-    draw_omr(
-        pdf,
+    html_string = build_pdf_html(
         payload,
-        omr_y
+        qr_data_uri
     )
 
-    # --------------------------------------------------------
-    # QR
-    # --------------------------------------------------------
-
-    draw_qr(
-        pdf,
-        payload
+    pdf_bytes = HTML(
+        string=html_string,
+        base_url="/"
+    ).write_pdf(
+        font_config=font_config
     )
 
-    # --------------------------------------------------------
-    # Footer
-    # --------------------------------------------------------
-
-    pdf.set_font(
-        "NotoDevanagari",
-        "",
-        6.5
-    )
-
-    pdf.set_xy(
-        10,
-        289
-    )
-
-    pdf.cell(
-        190,
-        4,
-        text="यह दस्तावेज़ स्वचालित रूप से तैयार किया गया है।",
-        align="C"
-    )
-
-    # --------------------------------------------------------
-    # OUTPUT
-    # --------------------------------------------------------
-
-    pdf_bytes = bytes(
-        pdf.output()
-    )
+    if not pdf_bytes:
+        raise RuntimeError(
+            "Generated PDF is empty"
+        )
 
     return pdf_bytes
 
 
 # ============================================================
-# SUPABASE STORAGE
+# SUPABASE UPLOAD
 # ============================================================
-
-SUPABASE_BUCKET = os.getenv(
-    "SUPABASE_PDF_BUCKET",
-    "letters"
-)
-
 
 def upload_pdf_to_supabase(
     pdf_bytes: bytes,
@@ -1225,80 +1480,95 @@ def upload_pdf_to_supabase(
 ) -> str:
 
     storage_path = (
-        f"omr/{datetime.utcnow().strftime('%Y/%m/%d')}/"
-        f"{file_name}"
+        "omr/"
+        + datetime.utcnow().strftime("%Y/%m/%d/")
+        + file_name
     )
 
     try:
 
         supabase.storage.from_(
-            SUPABASE_BUCKET
+            SUPABASE_PDF_BUCKET
         ).upload(
             path=storage_path,
             file=pdf_bytes,
             file_options={
-                "content-type": "application/pdf",
-                "upsert": "true"
+                "content-type":
+                    "application/pdf",
+                "upsert":
+                    "true"
             }
         )
 
-    except Exception as e:
+    except Exception as upload_error:
 
-        # If already exists, try update
         try:
 
             supabase.storage.from_(
-                SUPABASE_BUCKET
+                SUPABASE_PDF_BUCKET
             ).update(
                 path=storage_path,
                 file=pdf_bytes,
                 file_options={
-                    "content-type": "application/pdf",
-                    "upsert": "true"
+                    "content-type":
+                        "application/pdf",
+                    "upsert":
+                        "true"
                 }
             )
 
         except Exception:
 
             raise RuntimeError(
-                f"Supabase PDF upload failed: {str(e)}"
+                "Supabase upload failed: "
+                + str(upload_error)
             )
 
     # --------------------------------------------------------
-    # Signed URL
+    # SIGNED URL
     # --------------------------------------------------------
 
     try:
 
-        signed = supabase.storage.from_(
-            SUPABASE_BUCKET
-        ).create_signed_url(
-            storage_path,
-            60 * 60 * 24
+        signed = (
+            supabase
+            .storage
+            .from_(SUPABASE_PDF_BUCKET)
+            .create_signed_url(
+                storage_path,
+                60 * 60 * 24
+            )
         )
 
-        if isinstance(signed, dict):
+        if isinstance(
+            signed,
+            dict
+        ):
 
-            signed_url = (
+            url = (
                 signed.get("signedURL")
                 or signed.get("signedUrl")
                 or signed.get("signed_url")
             )
 
-            if signed_url:
-                return signed_url
+            if url:
+                return url
 
-        if isinstance(signed, str):
+        if isinstance(
+            signed,
+            str
+        ):
             return signed
 
     except Exception as e:
 
         raise RuntimeError(
-            f"Could not create signed URL: {str(e)}"
+            "Signed URL creation failed: "
+            + str(e)
         )
 
     raise RuntimeError(
-        "Supabase did not return a signed URL"
+        "Supabase signed URL was not returned"
     )
 
 
@@ -1307,11 +1577,12 @@ def upload_pdf_to_supabase(
 # ============================================================
 
 class OMRRequest(BaseModel):
+
     data: Dict[str, Any]
 
 
 # ============================================================
-# HEALTH
+# ROOT
 # ============================================================
 
 @app.get("/")
@@ -1320,21 +1591,41 @@ def root():
     return {
         "status": "ok",
         "service": "School OMR PDF API",
-        "pdf_engine": "fpdf2",
-        "text_shaping": "HarfBuzz",
-        "script": "Devanagari"
+        "pdf_engine": "WeasyPrint",
+        "text_engine": "Pango + HarfBuzz",
+        "font": "Noto Sans Devanagari",
+        "language": "hi"
     }
 
+
+# ============================================================
+# HEALTH
+# ============================================================
 
 @app.get("/health")
 def health():
 
     return {
         "status": "healthy",
-        "font_regular": os.path.exists(REGULAR_FONT),
-        "font_bold": os.path.exists(BOLD_FONT),
-        "supabase_configured": bool(SUPABASE_URL),
-        "text_shaping": "HarfBuzz"
+
+        "regular_font":
+            os.path.exists(
+                REGULAR_FONT
+            ),
+
+        "bold_font":
+            os.path.exists(
+                BOLD_FONT
+            ),
+
+        "supabase":
+            bool(SUPABASE_URL),
+
+        "pdf_engine":
+            "WeasyPrint",
+
+        "text_engine":
+            "Pango + HarfBuzz"
     }
 
 
@@ -1344,7 +1635,9 @@ def health():
 
 @app.post(
     "/generate-omr-pdf",
-    dependencies=[Security(verify_api_key)]
+    dependencies=[
+        Security(verify_api_key)
+    ]
 )
 def generate_omr_pdf(
     request: OMRRequest
@@ -1354,27 +1647,28 @@ def generate_omr_pdf(
 
         payload = request.data
 
-        if not isinstance(payload, dict):
+        if not isinstance(
+            payload,
+            dict
+        ):
+
             raise HTTPException(
                 status_code=400,
                 detail="data must be an object"
             )
 
         # ----------------------------------------------------
-        # Generate PDF
+        # GENERATE
         # ----------------------------------------------------
 
-        pdf_bytes = generate_hybrid_omr_pdf(
-            payload
+        pdf_bytes = (
+            generate_hybrid_omr_pdf(
+                payload
+            )
         )
 
-        if not pdf_bytes:
-            raise RuntimeError(
-                "PDF generation returned empty data"
-            )
-
         # ----------------------------------------------------
-        # File name
+        # FILE NAME
         # ----------------------------------------------------
 
         student_name = clean_text(
@@ -1387,9 +1681,12 @@ def generate_omr_pdf(
             )
         )
 
-        # Keep filename ASCII-safe
         safe_filename = "".join(
-            c if c.isalnum() or c in "-_"
+            c
+            if (
+                c.isalnum()
+                or c in "-_"
+            )
             else "_"
             for c in student_name
         )
@@ -1398,28 +1695,42 @@ def generate_omr_pdf(
             safe_filename = "student"
 
         file_name = (
-            f"{safe_filename}_"
-            f"{uuid.uuid4().hex[:10]}.pdf"
+            safe_filename
+            + "_"
+            + uuid.uuid4().hex[:10]
+            + ".pdf"
         )
 
         # ----------------------------------------------------
-        # Upload
+        # SUPABASE
         # ----------------------------------------------------
 
-        signed_url = upload_pdf_to_supabase(
-            pdf_bytes,
-            file_name
+        signed_url = (
+            upload_pdf_to_supabase(
+                pdf_bytes,
+                file_name
+            )
         )
 
         return {
+
             "success": True,
-            "file_name": file_name,
-            "file_url": signed_url,
-            "signed_url": signed_url,
-            "size_bytes": len(pdf_bytes)
+
+            "file_name":
+                file_name,
+
+            "file_url":
+                signed_url,
+
+            "signed_url":
+                signed_url,
+
+            "size_bytes":
+                len(pdf_bytes)
         }
 
     except HTTPException:
+
         raise
 
     except Exception as e:
@@ -1433,7 +1744,7 @@ def generate_omr_pdf(
 
 
 # ============================================================
-# LOCAL RUN
+# LOCAL SERVER
 # ============================================================
 
 if __name__ == "__main__":
