@@ -58,8 +58,8 @@ def setup_fonts():
         with urllib.request.urlopen(req) as resp, open(font_path_bld, 'wb') as f:
             f.write(resp.read())
 
-    pdfmetrics.registerFont(TTFont(FONT_NAME, font_path_reg))
-    pdfmetrics.registerFont(TTFont(FONT_BOLD, font_path_bld))
+    pdfmetrics.registerFont(TTFont(FONT_NAME, font_path_reg, shapable=True))
+    pdfmetrics.registerFont(TTFont(FONT_BOLD, font_path_bld, shapable=True))
 
 try:
     setup_fonts()
