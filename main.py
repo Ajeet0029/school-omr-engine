@@ -57,7 +57,7 @@ APP_API_SECRET_KEY = os.getenv("APP_API_SECRET_KEY")
 
 SUPABASE_PDF_BUCKET = os.getenv(
     "SUPABASE_PDF_BUCKET",
-    "letters"
+    "omr-sheets"
 )
 
 
