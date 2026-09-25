@@ -201,198 +201,272 @@ async def verify_api_key(api_key: str = Security(api_key_header)):
 # =====================================================================
 # 3. हाइब्रिड PDF लेआउट (ऊपर प्रश्न + नीचे OMR स्ट्रिप)
 # =====================================================================
-def generate_hybrid_omr_pdf(payload: dict) -> bytes:
-    buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=A4)
-    width, height = A4  # 595 x 842
+def hindi_width(text, size, bold=False):
+    fp=font_bold if bold else font_reg
+    f=ImageFont.truetype(fp,max(1,int(round(size*HINDI_RENDER_SCALE))))
+    d=ImageDraw.Draw(Image.new("L",(10,10)))
+    return d.textlength(str(text),font=f,direction="ltr",language="hi")/HINDI_RENDER_SCALE
 
-    # कोनों पर काले स्कैनर मार्कर्स (4 Corners)
-    m_size = 14
+
+def mixed_width(text,size,bold=False):
+    total=0.0
+    for run in RUN_RE.findall(str(text or "")):
+        if DEV_RE.search(run):
+            total += hindi_width(run,size,bold)
+        else:
+            total += pdfmetrics.stringWidth(run, "Helvetica-Bold" if bold else "Helvetica", size)
+    return total
+
+
+def draw_mixed_text(c,x,y,text,size,bold=False):
+    text=str(text or "")
+    if not text: return
+    font="Helvetica-Bold" if bold else "Helvetica"
+    for run in RUN_RE.findall(text):
+        if DEV_RE.search(run):
+            draw_hindi_text(c,x,y,run,size,bold)
+            x += hindi_width(run,size,bold)
+        else:
+            c.setFont(font,size)
+            c.drawString(x,y,run)
+            x += pdfmetrics.stringWidth(run,font,size)
+
+
+def wrap_mixed(text,max_width,size,bold=False,max_lines=None):
+    text=str(text or "").strip().replace("\n"," ")
+    if not text: return [""]
+    words=text.split()
+    lines=[]; cur=""
+    for word in words:
+        candidate=word if not cur else cur+" "+word
+        if mixed_width(candidate,size,bold)<=max_width:
+            cur=candidate
+        else:
+            if cur:
+                lines.append(cur)
+            piece=""
+            for ch in word:
+                cand=piece+ch
+                if piece and mixed_width(cand,size,bold)>max_width:
+                    lines.append(piece)
+                    piece=ch
+                else:
+                    piece=cand
+            cur=piece
+    if cur: lines.append(cur)
+    if max_lines is not None and len(lines)>max_lines:
+        # Only used when explicitly requested. Production layout calls without a limit.
+        lines=lines[:max_lines]
+        ell="…"; last=lines[-1]
+        while last and mixed_width(last+ell,size,bold)>max_width:
+            last=last[:-1]
+        lines[-1]=(last+ell) if last else ell
+    return lines
+
+
+def make_packet(payload, qs, total_q, date_s, fields):
+    import base64,zlib,json,re
+    def first(d,*keys):
+        for k in keys:
+            if isinstance(d,dict):
+                v=d.get(k)
+                if v not in (None,""): return str(v)
+        return ""
+    def normans(v):
+        s=str(v or "").strip().upper()
+        m=re.search(r'\b([ABCD])\b',s)
+        return m.group(1) if m else (s if s in "ABCD" else "")
+    ans=[]; qmeta=[]
+    for i,q in enumerate(qs[:total_q]):
+        q=q if isinstance(q,dict) else {}
+        a=normans(first(q,"correct_option","correct_answer","answer","answer_key","correctAnswer"))
+        ans.append(a)
+        qmeta.append({
+            "n":i+1,
+            "id":first(q,"question_id","qid","id") or f"Q{i+1:02d}",
+            "a":a,
+            "ch":first(q,"chapter","chapter_name") or fields["chapter"],
+            "sk":first(q,"skill_tested","skill","skillTested") or fields["skill"],
+            "d":first(q,"difficulty","difficulty_level","difficultyLevel") or fields["difficulty"]
+        })
+    packet={
+        "v":1,"type":"school_omr","test":fields["assignment_id"],
+        "school":fields["school"],"class":fields["class_name"],"section":fields["section"],
+        "subject":fields["subject"],"date":date_s,"difficulty":fields["difficulty"],
+        "chapter":fields["chapter"],"skill":fields["skill"],"n":total_q,
+        "ans":"".join(ans),"q":qmeta
+    }
+    raw=json.dumps(packet,ensure_ascii=False,separators=(",",":")).encode("utf-8")
+    return "OMR1."+base64.urlsafe_b64encode(zlib.compress(raw,9)).decode("ascii").rstrip("=")
+
+
+def generate_hybrid_omr_pdf(payload):
+    buffer=io.BytesIO(); c=canvas.Canvas(buffer,pagesize=A4)
+    width,height=A4
+    strip_y=154
+    # anchors
+    a=14; inset=18
     c.setFillColor(colors.black)
-    c.rect(18, height - 18 - m_size, m_size, m_size, fill=1, stroke=0)
-    c.rect(width - 18 - m_size, height - 18 - m_size, m_size, m_size, fill=1, stroke=0)
-    c.rect(18, 18, m_size, m_size, fill=1, stroke=0)
-    c.rect(width - 18 - m_size, 18, m_size, m_size, fill=1, stroke=0)
+    for x,y in [(inset,height-inset-a),(width-inset-a,height-inset-a),(inset,inset),(width-inset-a,inset)]:
+        c.rect(x,y,a,a,fill=1,stroke=0)
 
-    # ------------------ TOP SECTION (Header) ------------------
-    # स्कूल / टेस्ट हेडर
-    school_name = payload.get("school_name", "SCHOOL ASSESSMENT TEST")
-    c.setFont(FONT_BOLD, 12)
-    c.drawString(45, height - 40, school_name.upper())
+    # fields
+    def getv(*keys,default=""):
+        for k in keys:
+            v=payload.get(k)
+            if v not in (None,""): return str(v)
+        return default
+    school=getv("school_name","school",default="SCHOOL ASSESSMENT TEST")
+    class_name=getv("class_name","class",default="")
+    section=getv("section",default="")
+    subject=getv("subject",default="")
+    difficulty=getv("difficulty_level","difficulty",default="")
+    chapter=getv("chapter","chapter_name",default="")
+    skill=getv("skill_tested","skill",default="")
+    date_s=getv("date",default=datetime.now().strftime("%d-%b-%Y"))
+    assignment_id=getv("assignment_id","test_id",default="T01")
 
-    c.setFont(FONT_NAME, 8)
-    draw_hindi_text(c,45, height - 52, "निर्देश: सभी प्रश्नों के उत्तर नीचे दी गई ओएमआर पट्टी में नीले/काले पेन से गोला भरकर दें।", 8, bold=False)
+    # header left
+    if DEV_RE.search(school):
+        draw_mixed_text(c,45,height-34,school,12,True)
+    else:
+        c.setFont("Helvetica-Bold",12); c.drawString(45,height-34,school)
+    meta_parts=[]
+    if class_name: meta_parts.append(f"Class: {class_name}")
+    if section: meta_parts.append(f"Section: {section}")
+    if subject: meta_parts.append(f"Subject: {subject}")
+    meta="  |  ".join(meta_parts)
+    draw_mixed_text(c,45,height-48,meta,7.2,False)
 
-    # छात्र का नाम और रोल नंबर बॉक्स (दाएँ कोने पर)
-    c.rect(width - 220, height - 60, 180, 32, fill=0)
-    c.setFont(FONT_BOLD, 7.5)
-    c.drawString(width - 215, height - 42, "Name:")
-    c.drawString(width - 215, height - 54, "Roll No:")
-    # रोल नंबर के छोटे डिब्बे
-    box_start_x = width - 170
-    for b in range(4):
-        c.rect(box_start_x + (b * 12), height - 56, 10, 10, fill=0)
+    # instruction
+    draw_mixed_text(c,45,height-63,"निर्देश: सभी प्रश्नों के उत्तर नीचे दी गई OMR पट्टी में नीले/काले पेन से गोला भरकर दें।",6.8,False)
 
-    # विभाजक रेखा
-    c.setLineWidth(0.8)
-    c.line(40, height - 68, width - 40, height - 68)
+    # name/roll box
+    rx,ry,rw,rh=width-220,height-62,180,41
+    c.setLineWidth(.7); c.rect(rx,ry,rw,rh,fill=0,stroke=1)
+    c.setFont("Helvetica-Bold",7.2); c.drawString(rx+7,ry+26,"NAME:")
+    c.line(rx+45,ry+25,rx+rw-7,ry+25)
+    c.drawString(rx+7,ry+10,"ROLL NO:")
+    bx=rx+57; bs=11; gap=3
+    for b in range(4): c.rect(bx+b*(bs+gap),ry+6,bs,bs,fill=0,stroke=1)
+    c.setLineWidth(.8); c.line(40,height-72,width-40,height-72)
 
-    # ------------------ MIDDLE SECTION (Questions) ------------------
-    # ------------------ MIDDLE SECTION (Questions) ------------------
-    raw_questions = payload.get("questions", [])
-    if isinstance(raw_questions, str):
-        try:
-            raw_questions = json.loads(raw_questions)
-        except Exception:
-            raw_questions = []
-
-    total_q = len(raw_questions) if raw_questions else int(payload.get("total_questions", 10) or 10)
-   
-    # दो कॉलम में प्रश्न (बायाँ और दायाँ)
-    col1_x = 42
-    col2_x = (width / 2.0) + 10
-    col_width = (width / 2.0) - 52
-   
-    # 10 प्रश्न होने पर 5-5 दोनों कॉलम में; 20 होने पर 10-10
-    half_q = (total_q + 1) // 2
-    y_start = height - 85
-    line_spacing = 42 if total_q <= 10 else 24  # प्रश्नों की संख्या के अनुसार स्पेसिंग
+    # questions
+    raw=payload.get("questions",[])
+    if isinstance(raw,str):
+        try: raw=json.loads(raw)
+        except Exception: raw=[]
+    if not isinstance(raw,list): raw=[]
+    total_q=len(raw) if raw else int(payload.get("total_questions",10) or 10)
+    total_q=max(1,total_q)
+    if total_q>20: total_q=20
+    qs=[q if isinstance(q,dict) else {} for q in raw[:total_q]]
+    while len(qs)<total_q: qs.append({})
+    half=(total_q+1)//2
+    rows=half
+    q_top=height-88
+    q_area=390 if total_q<=20 else 390
+    row_h=q_area/rows
+    col1_x=42; col2_x=width/2+7; col_w=width/2-49; gap=8; opt_w=(col_w-gap)/2
 
     for idx in range(total_q):
-        q_data = raw_questions[idx] if idx < len(raw_questions) else {}
-        q_text = q_data.get("question_text") or q_data.get("question") or f"प्रश्न संख्या {idx + 1}"
-        opt_a = q_data.get("opt_a") or q_data.get("option_a") or "विकल्प A"
-        opt_b = q_data.get("opt_b") or q_data.get("option_b") or "विकल्प B"
-        opt_c = q_data.get("opt_c") or q_data.get("option_c") or "विकल्प C"
-        opt_d = q_data.get("opt_d") or q_data.get("option_d") or "विकल्प D"
+        q=qs[idx]
+        def qv(*keys,default=""):
+            for k in keys:
+                v=q.get(k)
+                if v not in (None,""): return str(v)
+            return default
+        qt=qv("question_text","question",default=f"प्रश्न संख्या {idx+1}")
+        opts=[
+            qv("opt_a","option_a",default="विकल्प A"),
+            qv("opt_b","option_b",default="विकल्प B"),
+            qv("opt_c","option_c",default="विकल्प C"),
+            qv("opt_d","option_d",default="विकल्प D"),
+        ]
+        col2=idx>=half; row=idx-half if col2 else idx; x=col2_x if col2 else col1_x
+        top=q_top-row*row_h
 
-        is_col2 = idx >= half_q
-        cur_x = col2_x if is_col2 else col1_x
-        row_num = idx - half_q if is_col2 else idx
-        cur_y = y_start - (row_num * line_spacing)
+        qsize=8.0 if total_q<=10 else 6.5
+        osize=6.7 if total_q<=10 else 5.2
+        max_q_lines=None
+        max_o_lines=None
 
-        # प्रश्न
-    
-        # लंबा प्रश्न ट्रंकेट न हो, इसके लिए पहली 50 अक्षर
-        display_q = f"{idx + 1}. {q_text[:55]}"
-        draw_hindi_text(c, cur_x, cur_y, display_q, 7.5, bold=True)
-        
+        for _ in range(18):
+            qlines=wrap_mixed(qt,col_w-16,qsize,True,max_q_lines)
+            olines=[wrap_mixed(opts[j],opt_w-14,osize,False,max_o_lines) for j in range(4)]
+            qh=len(qlines)*qsize*1.12
+            oh=(max(len(olines[0]),len(olines[1])) + max(len(olines[2]),len(olines[3])))*osize*1.1 + 6
+            if qh+oh+4 <= row_h-3 or (qsize<=4.8 and osize<=4.5):
+                break
+            qsize=max(4.8,qsize-.2); osize=max(4.5,osize-.15)
 
-        # विकल्प A, B, C, D
-     # विकल्प A, B, C, D
+        y=top-2
+        qlh=qsize*1.12
+        for li,line in enumerate(qlines):
+            draw_mixed_text(c,x+13,y-li*qlh,line,qsize,True)
+        c.setFont("Helvetica-Bold",qsize)
+        c.drawString(x,y,f"{idx+1}.")
+        y-=len(qlines)*qlh+1
 
-        draw_hindi_text(
-            c,
-            cur_x + 8,
-            cur_y - 10,
-            f"(A) {str(opt_a)[:18]}",
-            6.8,
-            bold=False
-        )
+        row_gap=osize*1.15+2
+        for j in range(4):
+            rr=0 if j<2 else 1; cc=j%2
+            oy=y-rr*row_gap
+            ox=x+cc*(opt_w+gap)
+            c.setFont("Helvetica",osize)
+            c.drawString(ox,oy,f"({chr(65+j)})")
+            for li,line in enumerate(olines[j]):
+                draw_mixed_text(c,ox+14,oy-li*osize*1.1,line,osize,False)
 
-        draw_hindi_text(
-            c,
-            cur_x + (col_width / 2),
-            cur_y - 10,
-            f"(B) {str(opt_b)[:18]}",
-            6.8,
-            bold=False
-        )
+    # bottom divider
+    c.setLineWidth(1); c.line(40,strip_y,width-40,strip_y)
 
-        draw_hindi_text(
-            c,
-            cur_x + 8,
-            cur_y - 20,
-            f"(C) {str(opt_c)[:18]}",
-            6.8,
-            bold=False
-        )
+    # test details
+    c.setFont("Helvetica-Bold",7.3); c.drawString(45,strip_y-12,"TEST DETAILS")
+    detail_rows=[
+        ("Class / Sec"," ".join([v for v in (class_name,section) if v])),
+        ("Subject",subject),("Date",date_s),("Difficulty",difficulty or "-"),
+        ("Chapter",chapter or "-"),("Skill",skill or "-"),("ID",assignment_id)
+    ]
+    dy=strip_y-23
+    for lab,val in detail_rows:
+        c.setFont("Helvetica-Bold",5.7); c.drawString(45,dy,lab+":")
+        draw_mixed_text(c,76,dy,val,5.7,False)
+        dy-=7.0
 
-        draw_hindi_text(
-            c,
-            cur_x + (col_width / 2),
-            cur_y - 20,
-            f"(D) {str(opt_d)[:18]}",
-            6.8,
-            bold=False
-        )
-        
+    # QR
+    packet=make_packet(payload,qs,total_q,date_s,{"school":school,"class_name":class_name,"section":section,"subject":subject,"difficulty":difficulty,"chapter":chapter,"skill":skill,"assignment_id":assignment_id})
+    qr=qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M,box_size=2,border=2)
+    qr.add_data(packet); qr.make(fit=True)
+    qr_img=qr.make_image(fill_color="black",back_color="white").convert("RGB")
+    c.drawInlineImage(qr_img,45,24,48,48)
 
-
-
-
-    # ------------------ BOTTOM SECTION (OMR Answer Strip) ------------------
-    strip_y = 155
-    c.setLineWidth(1)
-    c.line(40, strip_y, width - 40, strip_y)  # ऊपर की बॉर्डर
-
-    # 1. टेस्ट डिटेल्स व QR कोड
-    c.setFont(FONT_BOLD, 7.5)
-    c.drawString(45, strip_y - 15, "TEST DETAILS")
-    c.setFont(FONT_NAME, 6.8)
-    c.drawString(45, strip_y - 27, f"Class: {payload.get('class_name', '')} {payload.get('section', '')}")
-    c.drawString(45, strip_y - 37, f"Subject: {payload.get('subject', '')}")
-    c.drawString(45, strip_y - 47, f"Date: {datetime.now().strftime('%d-%b-%Y')}")
-    c.drawString(45, strip_y - 57, f"ID: {payload.get('assignment_id', 'T01')}")
-
-    # QR कोड जनरेशन (सीधे PIL Image पास करें)
-    qr = qrcode.QRCode(box_size=2, border=0)
-    qr_data = f"ID:{payload.get('assignment_id')}|CLS:{payload.get('class_name')}"
-    qr.add_data(qr_data)
-    qr.make(fit=True)
-    qr_img = qr.make_image(fill_color="black", back_color="white").convert('RGB')
-   
-    # सीधे इमेज ऑब्जेक्ट ड्रा करें
-    c.drawInlineImage(qr_img, 45, strip_y - 105, 42, 42)
-
-
-    # 2. रोल नंबर बबल ग्रिड
-    roll_x = 135
-    c.setFont(FONT_BOLD, 7.5)
-    c.drawString(roll_x, strip_y - 15, "ROLL NO")
-   
-    # 2 डिजिट रोल नंबर बबल्स
-    for col_r in range(2):
-        bx = roll_x + 5 + (col_r * 15)
+    # roll no bubble grid
+    roll_x=140
+    c.setFont("Helvetica-Bold",7.3); c.drawString(roll_x,strip_y-12,"ROLL NO")
+    for col in range(2):
+        bx=roll_x+6+col*18
         for num in range(10):
-            by = strip_y - 30 - (num * 8.5)
-            c.circle(bx, by, 3.2, stroke=1, fill=0)
-            c.setFont(FONT_NAME, 5)
-            c.drawCentredString(bx, by - 1.8, str(num))
+            by=strip_y-27-num*8.0
+            c.circle(bx,by,3.0,stroke=1,fill=0)
+            c.setFont("Helvetica",4.5); c.drawCentredString(bx,by-1.5,str(num))
 
-    # 3. आंसर स्ट्रिप बबल्स (ANSWER STRIP)
-    ans_x = 210
-    c.setFont(FONT_BOLD, 8)
-    c.drawString(ans_x, strip_y - 15, "ANSWER STRIP (Mark One Option Only)")
+    # answer strip
+    ans_x=220
+    c.setFont("Helvetica-Bold",7.3); c.drawString(ans_x,strip_y-12,"ANSWER STRIP (Mark One Option Only)")
+    ans_cols=2 if total_q<=10 else 4
+    qpc=(total_q+ans_cols-1)//ans_cols; col_gap=74
+    for qi in range(total_q):
+        ci=qi//qpc; ri=qi%qpc
+        qx=ans_x+ci*col_gap; qy=strip_y-27-ri*10.0
+        c.setFont("Helvetica-Bold",6.0); c.drawString(qx,qy-2,f"Q{qi+1:02d}")
+        for oi,label in enumerate("ABCD"):
+            bx=qx+20+oi*11.2
+            c.circle(bx,qy,3.15,stroke=1,fill=0)
+            c.setFont("Helvetica",4.4); c.drawCentredString(bx,qy-1.45,label)
 
-    # बबल्स ग्रिड (10 प्रश्न = 2 कॉलम; 20 प्रश्न = 4 कॉलम)
-    ans_cols = 2 if total_q <= 10 else 4
-    q_per_ans_col = (total_q + ans_cols - 1) // ans_cols
-    col_gap = 75
-    opt_labels = ["A", "B", "C", "D"]
+    c.showPage(); c.save(); buffer.seek(0); return buffer.getvalue()
 
-    for q_i in range(total_q):
-        c_i = q_i // q_per_ans_col
-        r_i = q_i % q_per_ans_col
-
-        q_base_x = ans_x + (c_i * col_gap)
-        q_base_y = strip_y - 30 - (r_i * 10)
-
-        c.setFont(FONT_BOLD, 6.5)
-        c.drawString(q_base_x, q_base_y - 2, f"Q{q_i + 1:02d}")
-
-        for o_i, o_label in enumerate(opt_labels):
-            bx = q_base_x + 22 + (o_i * 12)
-            by = q_base_y
-            c.circle(bx, by, 3.4, stroke=1, fill=0)
-            c.setFont(FONT_NAME, 4.8)
-            c.drawCentredString(bx, by - 1.5, o_label)
-
-    c.showPage()
-    c.save()
-
-    buffer.seek(0)
-    return buffer.getvalue()
 
 
 # =====================================================================
