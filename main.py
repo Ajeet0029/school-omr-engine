@@ -571,6 +571,7 @@ async def generate_omr_pdf(request: Request):
             "file_name": file_name, 
             "file_url": download_url,
             "signed_url": download_url,
+            "download_url": download_url,
             "size_bytes": len(pdf_bytes) 
         }
 
