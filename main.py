@@ -168,13 +168,6 @@ def draw_hindi_text(c, x, y, text, font_size, bold=False):
         mask="auto"
     )
 
-
-
-
-
-
-
-
 # =====================================================================
 # 2. Supabase एवं सुरक्षा सेटिंग्स
 # =====================================================================
@@ -286,46 +279,46 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
         
 
         # विकल्प A, B, C, D
-    
+     # विकल्प A, B, C, D
+
         draw_hindi_text(
-    c,
-    cur_x + 8,
-    cur_y - 10,
-    f"(A) {str(opt_a)[:18]}",
-    6.8,
-    bold=False
-)
+            c,
+            cur_x + 8,
+            cur_y - 10,
+            f"(A) {str(opt_a)[:18]}",
+            6.8,
+            bold=False
+        )
 
-draw_hindi_text(
-    c,
-    cur_x + (col_width / 2),
-    cur_y - 10,
-    f"(B) {str(opt_b)[:18]}",
-    6.8,
-    bold=False
-)
+        draw_hindi_text(
+            c,
+            cur_x + (col_width / 2),
+            cur_y - 10,
+            f"(B) {str(opt_b)[:18]}",
+            6.8,
+            bold=False
+        )
 
-draw_hindi_text(
-    c,
-    cur_x + 8,
-    cur_y - 20,
-    f"(C) {str(opt_c)[:18]}",
-    6.8,
-    bold=False
-)
+        draw_hindi_text(
+            c,
+            cur_x + 8,
+            cur_y - 20,
+            f"(C) {str(opt_c)[:18]}",
+            6.8,
+            bold=False
+        )
 
-draw_hindi_text(
-    c,
-    cur_x + (col_width / 2),
-    cur_y - 20,
-    f"(D) {str(opt_d)[:18]}",
-    6.8,
-    bold=False
-)
+        draw_hindi_text(
+            c,
+            cur_x + (col_width / 2),
+            cur_y - 20,
+            f"(D) {str(opt_d)[:18]}",
+            6.8,
+            bold=False
+        )
+        
 
 
-
-   
 
 
     # ------------------ BOTTOM SECTION (OMR Answer Strip) ------------------
