@@ -130,7 +130,7 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
     c.drawString(45, height - 40, school_name.upper())
 
     c.setFont(FONT_NAME, 8)
-    c.drawString(45, height - 52, "निर्देश: सभी प्रश्नों के उत्तर नीचे दी गई ओएमआर पट्टी में नीले/काले पेन से गोला भरकर दें।")
+    c.drawString(45, height - 52, "निर्देश: सभी प्रश्नों के उत्तर नीचे दी गई ओएमआर पट्टी में नीले/काले पेन से गोला भरकर दें।", shaping=True)
 
     # छात्र का नाम और रोल नंबर बॉक्स (दाएँ कोने पर)
     c.rect(width - 220, height - 60, 180, 32, fill=0)
@@ -184,7 +184,8 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
         c.setFont(FONT_BOLD, 7.5)
         # लंबा प्रश्न ट्रंकेट न हो, इसके लिए पहली 50 अक्षर
         display_q = f"{idx + 1}. {q_text[:55]}"
-        c.drawString(cur_x, cur_y, display_q, shaping=True)
+        c.drawString(cur_x, cur_y, f"{idx + 1}.", shaping=False)
+        c.drawString(cur_x + 10, cur_y, q_text[:55], shaping=True)
 
         # विकल्प A, B, C, D
         c.setFont(FONT_NAME, 6.8)
