@@ -280,18 +280,50 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
         cur_y = y_start - (row_num * line_spacing)
 
         # प्रश्न
-        c.setFont(FONT_BOLD, 7.5)
+    
         # लंबा प्रश्न ट्रंकेट न हो, इसके लिए पहली 50 अक्षर
         display_q = f"{idx + 1}. {q_text[:55]}"
         draw_hindi_text(c, cur_x, cur_y, display_q, 7.5, bold=True)
         
 
         # विकल्प A, B, C, D
-        c.setFont(FONT_NAME, 6.8)
-        c.drawString(cur_x + 8, cur_y - 10, f"(A) {str(opt_a)[:18]}")
-        c.drawString(cur_x + (col_width / 2), cur_y - 10, f"(B) {str(opt_b)[:18]}")
-        c.drawString(cur_x + 8, cur_y - 20, f"(C) {str(opt_c)[:18]}")
-        c.drawString(cur_x + (col_width / 2), cur_y - 20, f"(D) {str(opt_d)[:18]}")
+    
+        draw_hindi_text(
+    c,
+    cur_x + 8,
+    cur_y - 10,
+    f"(A) {str(opt_a)[:18]}",
+    6.8,
+    bold=False
+)
+
+draw_hindi_text(
+    c,
+    cur_x + (col_width / 2),
+    cur_y - 10,
+    f"(B) {str(opt_b)[:18]}",
+    6.8,
+    bold=False
+)
+
+draw_hindi_text(
+    c,
+    cur_x + 8,
+    cur_y - 20,
+    f"(C) {str(opt_c)[:18]}",
+    6.8,
+    bold=False
+)
+
+draw_hindi_text(
+    c,
+    cur_x + (col_width / 2),
+    cur_y - 20,
+    f"(D) {str(opt_d)[:18]}",
+    6.8,
+    bold=False
+)
+
 
 
    
