@@ -568,8 +568,11 @@ async def generate_omr_pdf(request: Request):
 
         return {
             "success": True,
-            "download_url": download_url,
-            "file_name": file_name
+            "massage": "PDF generated successfully",
+            "file_url":
+            download_url, "signed_url":
+            download_url, "download_urL":
+            download_url, "file_name": file_name
         }
 
     except Exception as e:
