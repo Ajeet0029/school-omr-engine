@@ -20,6 +20,8 @@ from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 import qrcode
+from PIL import Image, ImageDraw, ImageFont, features
+from reportlab.lib.utils import ImageReader
 
 app = FastAPI(title="School OMR & Question Engine")
 
@@ -68,6 +70,103 @@ except Exception as e:
     print(f"Font Setup Error: {e}")
 
 # ------------------ 2. HINDI TEXT REORDERING FIXER ------------------
+# ------------------ 2. HINDI TEXT RENDERER ------------------
+
+HINDI_RENDER_SCALE = 6
+
+def draw_hindi_text(c, x, y, text, font_size, bold=False):
+    """
+    Render Hindi through Pillow + RAQM and place it into the
+    existing ReportLab PDF without changing the PDF layout.
+    """
+
+    text = "" if text is None else str(text)
+
+    if not text:
+        return
+
+    # RAQM is required for proper Devanagari shaping.
+    if not features.check("raqm"):
+        raise RuntimeError(
+            "Pillow RAQM support is not available on the server."
+        )
+
+    if bold:
+        font_path = "/tmp/fonts/NotoSansDevanagari-Bold.ttf"
+    else:
+        font_path = "/tmp/fonts/NotoSansDevanagari-Regular.ttf"
+
+    font_px = max(
+        1,
+        int(round(font_size * HINDI_RENDER_SCALE))
+    )
+
+    font = ImageFont.truetype(
+        font_path,
+        font_px
+    )
+
+    # Measure the text with RAQM/HarfBuzz shaping.
+    dummy = Image.new(
+        "RGBA",
+        (10, 10),
+        (255, 255, 255, 0)
+    )
+
+    draw = ImageDraw.Draw(dummy)
+
+    bbox = draw.textbbox(
+        (0, 0),
+        text,
+        font=font,
+        anchor="ls",
+        direction="ltr",
+        language="hi"
+    )
+
+    pad = 2 * HINDI_RENDER_SCALE
+
+    img_w = max(
+        1,
+        bbox[2] - bbox[0] + (2 * pad)
+    )
+
+    img_h = max(
+        1,
+        bbox[3] - bbox[1] + (2 * pad)
+    )
+
+    img = Image.new(
+        "RGBA",
+        (img_w, img_h),
+        (255, 255, 255, 0)
+    )
+
+    draw = ImageDraw.Draw(img)
+
+    baseline_x = pad - bbox[0]
+    baseline_y = pad - bbox[1]
+
+    draw.text(
+        (baseline_x, baseline_y),
+        text,
+        font=font,
+        fill=(0, 0, 0, 255),
+        anchor="ls",
+        direction="ltr",
+        language="hi"
+    )
+
+    # Put the rendered Hindi image back onto the
+    # existing ReportLab canvas at the same baseline.
+    c.drawImage(
+        ImageReader(img),
+        x - (baseline_x / HINDI_RENDER_SCALE),
+        y - ((img_h - baseline_y) / HINDI_RENDER_SCALE),
+        width=img_w / HINDI_RENDER_SCALE,
+        height=img_h / HINDI_RENDER_SCALE,
+        mask="auto"
+    )
 
 
 
@@ -130,7 +229,7 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
     c.drawString(45, height - 40, school_name.upper())
 
     c.setFont(FONT_NAME, 8)
-    c.drawString(45, height - 52, "निर्देश: सभी प्रश्नों के उत्तर नीचे दी गई ओएमआर पट्टी में नीले/काले पेन से गोला भरकर दें।", shaping=True)
+    draw_hindi_text(c,45, height - 52, "निर्देश: सभी प्रश्नों के उत्तर नीचे दी गई ओएमआर पट्टी में नीले/काले पेन से गोला भरकर दें।", 8, bold=False)
 
     # छात्र का नाम और रोल नंबर बॉक्स (दाएँ कोने पर)
     c.rect(width - 220, height - 60, 180, 32, fill=0)
@@ -184,8 +283,8 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
         c.setFont(FONT_BOLD, 7.5)
         # लंबा प्रश्न ट्रंकेट न हो, इसके लिए पहली 50 अक्षर
         display_q = f"{idx + 1}. {q_text[:55]}"
-        c.drawString(cur_x, cur_y, f"{idx + 1}.", shaping=False)
-        c.drawString(cur_x + 10, cur_y, q_text[:55], shaping=True)
+        draw_hindi_text(c, cur_x, cur_y, display_q, 7.5, bold=True)
+        
 
         # विकल्प A, B, C, D
         c.setFont(FONT_NAME, 6.8)
