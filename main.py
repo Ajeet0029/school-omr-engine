@@ -201,6 +201,15 @@ async def verify_api_key(api_key: str = Security(api_key_header)):
 # =====================================================================
 # 3. हाइब्रिड PDF लेआउट (ऊपर प्रश्न + नीचे OMR स्ट्रिप)
 # =====================================================================
+import re
+
+DEV_RE = re.compile(r'[\u0900-\u097F]')
+RUN_RE = re.compile(r'[\u0900-\u097F]+|[^\u0900-\u097F]+')
+
+font_reg = "/tmp/fonts/NotoSansDevanagari-Regular.ttf"
+font_bold = "/tmp/fonts/NotoSansDevanagari-Bold.ttf"
+
+
 def hindi_width(text, size, bold=False):
     fp=font_bold if bold else font_reg
     f=ImageFont.truetype(fp,max(1,int(round(size*HINDI_RENDER_SCALE))))
