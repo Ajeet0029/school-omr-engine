@@ -438,1544 +438,1734 @@ async def verify_api_key(
 # 6. HYBRID PDF GENERATOR
 # =====================================================================
 
-def generate_hybrid_omr_pdf(payload):
-    """
-    PDF layout only.
-    Existing API/auth/upload/QR packet logic is preserved.
-    10/20 question layout remains separate.
-    21-40 question layout is a dedicated single-page compact block.
-    """
+def generate_hybrid_omr_pdf(
+    payload: dict
+) -> bytes:
 
     buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=A4)
+
+    c = canvas.Canvas(
+        buffer,
+        pagesize=A4
+    )
 
     width, height = A4
 
-    # ============================================================
-    # COMMON DATA
-    # ============================================================
+    # ================================================================
+    # LOCAL LAYOUT HELPERS
+    # IMPORTANT:
+    # These are inside this function only.
+    # No external helper/dependency is added.
+    # ================================================================
 
-    def getv(*keys, default=""):
-        for k in keys:
-            v = payload.get(k)
-            if v not in (None, ""):
-                return str(v)
-        return default
+    def measure_text(
+        text,
+        font_size,
+        bold=False
+    ):
+        text = str(text or "")
 
-    school = getv(
-        "school_name",
-        "school",
-        default="SCHOOL ASSESSMENT TEST"
+        font_path = (
+            FONT_BOLD_PATH
+            if bold
+            else FONT_REG_PATH
+        )
+
+        font_px = max(
+            1,
+            int(
+                round(
+                    font_size
+                    * FONT_RENDER_SCALE
+                )
+            )
+        )
+
+        font = ImageFont.truetype(
+            font_path,
+            font_px
+        )
+
+        dummy = Image.new(
+            "RGBA",
+            (10, 10),
+            (255, 255, 255, 0)
+        )
+
+        d = ImageDraw.Draw(
+            dummy
+        )
+
+        bbox = d.textbbox(
+            (0, 0),
+            text,
+            font=font,
+            anchor="ls",
+            direction="ltr",
+            language="hi"
+        )
+
+        return (
+            bbox[2] - bbox[0]
+        ) / FONT_RENDER_SCALE
+
+    def wrap_text(
+        text,
+        max_width,
+        font_size,
+        bold=False
+    ):
+        text = str(text or "")
+
+        if not text.strip():
+            return [""]
+
+        words = text.split()
+        lines = []
+        current = ""
+
+        for word in words:
+
+            candidate = (
+                word
+                if not current
+                else
+                current + " " + word
+            )
+
+            if (
+                measure_text(
+                    candidate,
+                    font_size,
+                    bold
+                )
+                <= max_width
+            ):
+                current = candidate
+                continue
+
+            # --------------------------------------------------------
+            # Current line is full.
+            # --------------------------------------------------------
+
+            if current:
+                lines.append(
+                    current
+                )
+
+            # --------------------------------------------------------
+            # If the new word itself fits, start new line.
+            # Otherwise split character-wise.
+            # --------------------------------------------------------
+
+            if (
+                measure_text(
+                    word,
+                    font_size,
+                    bold
+                )
+                <= max_width
+            ):
+                current = word
+            else:
+
+                piece = ""
+
+                for ch in word:
+
+                    test_piece = (
+                        piece + ch
+                    )
+
+                    if (
+                        piece
+                        and
+                        measure_text(
+                            test_piece,
+                            font_size,
+                            bold
+                        )
+                        > max_width
+                    ):
+                        lines.append(
+                            piece
+                        )
+                        piece = ch
+                    else:
+                        piece = test_piece
+
+                current = piece
+
+        if current:
+            lines.append(
+                current
+            )
+
+        return (
+            lines
+            if lines
+            else [""]
+        )
+
+    def draw_wrapped(
+        text,
+        x,
+        y,
+        max_width,
+        font_size,
+        bold=False,
+        line_height=None
+    ):
+
+        lines = wrap_text(
+            text,
+            max_width,
+            font_size,
+            bold
+        )
+
+        if line_height is None:
+            line_height = (
+                font_size * 1.08
+            )
+
+        for line_index, line in enumerate(
+            lines
+        ):
+            draw_hindi_text(
+                c,
+                x,
+                y - (
+                    line_index
+                    * line_height
+                ),
+                line,
+                font_size,
+                bold=bold
+            )
+
+        return len(lines)
+
+    def draw_option(
+        label,
+        text,
+        x,
+        y,
+        max_width,
+        font_size,
+        line_height
+    ):
+
+        draw_hindi_text(
+            c,
+            x,
+            y,
+            f"({label})",
+            font_size,
+            bold=False
+        )
+
+        wrapped = wrap_text(
+            text,
+            max_width - 13,
+            font_size,
+            False
+        )
+
+        for line_index, line in enumerate(
+            wrapped
+        ):
+
+            draw_hindi_text(
+                c,
+                x + 12,
+                y - (
+                    line_index
+                    * line_height
+                ),
+                line,
+                font_size,
+                bold=False
+            )
+
+        return len(wrapped)
+
+    # ================================================================
+    # CORNER SCANNER MARKERS
+    # ================================================================
+
+    m_size = 14
+
+    c.setFillColor(
+        colors.black
     )
 
-    class_name = getv(
-        "class_name",
-        "class",
-        default=""
+    c.rect(
+        18,
+        height - 18 - m_size,
+        m_size,
+        m_size,
+        fill=1,
+        stroke=0
     )
 
-    section = getv(
-        "section",
-        default=""
+    c.rect(
+        width - 18 - m_size,
+        height - 18 - m_size,
+        m_size,
+        m_size,
+        fill=1,
+        stroke=0
     )
 
-    subject = getv(
-        "subject",
-        default=""
+    c.rect(
+        18,
+        18,
+        m_size,
+        m_size,
+        fill=1,
+        stroke=0
     )
 
-    difficulty = getv(
-        "difficulty_level",
-        "difficulty",
-        default=""
+    c.rect(
+        width - 18 - m_size,
+        18,
+        m_size,
+        m_size,
+        fill=1,
+        stroke=0
     )
 
-    chapter = getv(
-        "chapter",
-        "chapter_name",
-        default=""
+    # ================================================================
+    # BASIC DATA
+    # ================================================================
+
+    school_name = str(
+        payload.get(
+            "school_name",
+            "SCHOOL ASSESSMENT TEST"
+        )
     )
 
-    skill = getv(
-        "skill_tested",
-        "skill",
-        default=""
+    class_name = str(
+        payload.get(
+            "class_name",
+            ""
+        )
     )
 
-    date_s = getv(
-        "date",
-        default=datetime.now().strftime("%d-%b-%Y")
+    section = str(
+        payload.get(
+            "section",
+            ""
+        )
     )
 
-    assignment_id = getv(
-        "assignment_id",
-        "test_id",
-        default="T01"
+    subject = str(
+        payload.get(
+            "subject",
+            ""
+        )
     )
 
-    # ============================================================
-    # QUESTIONS DATA
-    # ============================================================
+    difficulty = str(
+        payload.get(
+            "difficulty_level",
+            payload.get(
+                "difficulty",
+                ""
+            )
+        )
+    )
 
-    raw = payload.get("questions", [])
+    chapter = str(
+        payload.get(
+            "chapter",
+            payload.get(
+                "chapter_name",
+                ""
+            )
+        )
+    )
 
-    if isinstance(raw, str):
+    skill = str(
+        payload.get(
+            "skill_tested",
+            payload.get(
+                "skill",
+                ""
+            )
+        )
+    )
+
+    assignment_id = str(
+        payload.get(
+            "assignment_id",
+            "T01"
+        )
+    )
+
+    # ================================================================
+    # QUESTIONS INPUT
+    # ================================================================
+
+    raw_questions = payload.get(
+        "questions",
+        []
+    )
+
+    if isinstance(
+        raw_questions,
+        str
+    ):
         try:
-            raw = json.loads(raw)
-        except Exception:
-            raw = []
-
-    if not isinstance(raw, list):
-        raw = []
-
-    total_q = len(raw)
-
-    if total_q <= 0:
-        try:
-            total_q = int(
-                payload.get("total_questions", 10) or 10
+            raw_questions = json.loads(
+                raw_questions
             )
         except Exception:
-            total_q = 10
+            raw_questions = []
 
-    total_q = max(1, total_q)
+    if not isinstance(
+        raw_questions,
+        list
+    ):
+        raw_questions = []
 
+    total_q = (
+        len(raw_questions)
+        if raw_questions
+        else int(
+            payload.get(
+                "total_questions",
+                10
+            ) or 10
+        )
+    )
+
+    if total_q < 1:
+        total_q = 1
+
+    # Layout is designed for maximum 40 questions.
     if total_q > 40:
         total_q = 40
 
-    qs = [
-        q if isinstance(q, dict) else {}
-        for q in raw[:total_q]
-    ]
+    # ================================================================
+    # HEADER GEOMETRY
+    # ================================================================
 
-    while len(qs) < total_q:
-        qs.append({})
+    is_40_block = (
+        total_q > 20
+    )
 
-    # ============================================================
-    # COMMON ANCHOR / REGISTRATION MARKS
-    # ============================================================
+    if is_40_block:
 
-    a = 14
-    inset = 18
-
-    c.setFillColor(colors.black)
-
-    for x, y in [
-        (inset, height - inset - a),
-        (width - inset - a, height - inset - a),
-        (inset, inset),
-        (width - inset - a, inset)
-    ]:
-        c.rect(
-            x,
-            y,
-            a,
-            a,
-            fill=1,
-            stroke=0
+        header_school_y = (
+            height - 30
         )
 
-    # ============================================================
-    # BLOCK 1
-    # 10 / 20 QUESTIONS
-    # ============================================================
-
-    if total_q <= 20:
-
-        strip_y = 154
-
-        # --------------------------------------------------------
-        # HEADER
-        # --------------------------------------------------------
-
-        if any('\u0900' <= ch <= '\u097F' for ch in school):
-            draw_mixed_text(
-                c,
-                45,
-                height - 34,
-                school,
-                12,
-                True
-            )
-        else:
-            c.setFont(
-                "Helvetica-Bold",
-                12
-            )
-            c.drawString(
-                45,
-                height - 34,
-                school
-            )
-
-        meta_parts = []
-
-        if class_name:
-            meta_parts.append(
-                f"Class: {class_name}"
-            )
-
-        if section:
-            meta_parts.append(
-                f"Section: {section}"
-            )
-
-        if subject:
-            meta_parts.append(
-                f"Subject: {subject}"
-            )
-
-        meta = "  |  ".join(meta_parts)
-
-        draw_mixed_text(
-            c,
-            45,
-            height - 48,
-            meta,
-            7.2,
-            False
+        header_meta_y = (
+            height - 42
         )
 
-        draw_mixed_text(
-            c,
-            45,
-            height - 63,
-            "निर्देश: सभी प्रश्नों के उत्तर नीचे दी गई OMR पट्टी में नीले/काले पेन से गोला भरकर दें।",
-            6.8,
-            False
+        instruction_y = (
+            height - 54
         )
 
-        # --------------------------------------------------------
-        # NAME / ROLL BOX
-        # --------------------------------------------------------
-
-        rx = width - 220
-        ry = height - 62
-        rw = 180
-        rh = 41
-
-        c.setLineWidth(.7)
-
-        c.rect(
-            rx,
-            ry,
-            rw,
-            rh,
-            fill=0,
-            stroke=1
+        divider_y = (
+            height - 66
         )
-
-        c.setFont(
-            "Helvetica-Bold",
-            7.2
-        )
-
-        c.drawString(
-            rx + 7,
-            ry + 26,
-            "NAME:"
-        )
-
-        c.line(
-            rx + 45,
-            ry + 25,
-            rx + rw - 7,
-            ry + 25
-        )
-
-        c.drawString(
-            rx + 7,
-            ry + 10,
-            "ROLL NO:"
-        )
-
-        bx = rx + 57
-        bs = 11
-        gap = 3
-
-        for b in range(4):
-            c.rect(
-                bx + b * (bs + gap),
-                ry + 6,
-                bs,
-                bs,
-                fill=0,
-                stroke=1
-            )
-
-        c.setLineWidth(.8)
-
-        c.line(
-            40,
-            height - 72,
-            width - 40,
-            height - 72
-        )
-
-        # --------------------------------------------------------
-        # QUESTIONS
-        # --------------------------------------------------------
-
-        half = (total_q + 1) // 2
-        rows = half
-
-        q_top = height - 88
-
-        q_area = 390
-
-        row_h = q_area / rows
-
-        col1_x = 42
-        col2_x = width / 2 + 7
-
-        col_w = width / 2 - 49
-
-        gap = 8
-
-        opt_w = (col_w - gap) / 2
-
-        for idx in range(total_q):
-
-            q = qs[idx]
-
-            def qv(*keys, default=""):
-                for k in keys:
-                    v = q.get(k)
-                    if v not in (None, ""):
-                        return str(v)
-                return default
-
-            qt = qv(
-                "question_text",
-                "question",
-                default=f"प्रश्न संख्या {idx + 1}"
-            )
-
-            opts = [
-                qv(
-                    "opt_a",
-                    "option_a",
-                    default="विकल्प A"
-                ),
-                qv(
-                    "opt_b",
-                    "option_b",
-                    default="विकल्प B"
-                ),
-                qv(
-                    "opt_c",
-                    "option_c",
-                    default="विकल्प C"
-                ),
-                qv(
-                    "opt_d",
-                    "option_d",
-                    default="विकल्प D"
-                ),
-            ]
-
-            col2 = idx >= half
-
-            row = (
-                idx - half
-                if col2
-                else idx
-            )
-
-            x = (
-                col2_x
-                if col2
-                else col1_x
-            )
-
-            top = q_top - row * row_h
-
-            qsize = (
-                8.0
-                if total_q <= 10
-                else 6.5
-            )
-
-            osize = (
-                6.7
-                if total_q <= 10
-                else 5.2
-            )
-
-            max_q_lines = None
-            max_o_lines = None
-
-            for _ in range(18):
-
-                qlines = wrap_mixed(
-                    qt,
-                    col_w - 16,
-                    qsize,
-                    True,
-                    max_q_lines
-                )
-
-                olines = [
-                    wrap_mixed(
-                        opts[j],
-                        opt_w - 14,
-                        osize,
-                        False,
-                        max_o_lines
-                    )
-                    for j in range(4)
-                ]
-
-                qh = (
-                    len(qlines)
-                    * qsize
-                    * 1.12
-                )
-
-                oh = (
-                    (
-                        max(
-                            len(olines[0]),
-                            len(olines[1])
-                        )
-                        +
-                        max(
-                            len(olines[2]),
-                            len(olines[3])
-                        )
-                    )
-                    * osize
-                    * 1.1
-                    + 6
-                )
-
-                if (
-                    qh + oh + 4 <= row_h - 3
-                    or (
-                        qsize <= 4.8
-                        and osize <= 4.5
-                    )
-                ):
-                    break
-
-                qsize = max(
-                    4.8,
-                    qsize - .2
-                )
-
-                osize = max(
-                    4.5,
-                    osize - .15
-                )
-
-            y = top - 2
-
-            qlh = qsize * 1.12
-
-            for li, line in enumerate(qlines):
-
-                draw_mixed_text(
-                    c,
-                    x + 13,
-                    y - li * qlh,
-                    line,
-                    qsize,
-                    True
-                )
-
-            c.setFont(
-                "Helvetica-Bold",
-                qsize
-            )
-
-            c.drawString(
-                x,
-                y,
-                f"{idx + 1}."
-            )
-
-            y -= (
-                len(qlines)
-                * qlh
-                + 1
-            )
-
-            row_gap = (
-                osize * 1.15
-                + 2
-            )
-
-            for j in range(4):
-
-                rr = (
-                    0
-                    if j < 2
-                    else 1
-                )
-
-                cc = j % 2
-
-                oy = (
-                    y
-                    - rr * row_gap
-                )
-
-                ox = (
-                    x
-                    + cc
-                    * (
-                        opt_w
-                        + gap
-                    )
-                )
-
-                c.setFont(
-                    "Helvetica",
-                    osize
-                )
-
-                c.drawString(
-                    ox,
-                    oy,
-                    f"({chr(65 + j)})"
-                )
-
-                for li, line in enumerate(
-                    olines[j]
-                ):
-
-                    draw_mixed_text(
-                        c,
-                        ox + 14,
-                        oy
-                        - li
-                        * osize
-                        * 1.1,
-                        line,
-                        osize,
-                        False
-                    )
-
-        # --------------------------------------------------------
-        # BOTTOM DIVIDER
-        # --------------------------------------------------------
-
-        c.setLineWidth(1)
-
-        c.line(
-            40,
-            strip_y,
-            width - 40,
-            strip_y
-        )
-
-        # --------------------------------------------------------
-        # TEST DETAILS
-        # --------------------------------------------------------
-
-        c.setFont(
-            "Helvetica-Bold",
-            7.3
-        )
-
-        c.drawString(
-            45,
-            strip_y - 12,
-            "TEST DETAILS"
-        )
-
-        detail_rows = [
-            (
-                "Class / Sec",
-                " ".join(
-                    [
-                        v
-                        for v in (
-                            class_name,
-                            section
-                        )
-                        if v
-                    ]
-                )
-            ),
-            (
-                "Subject",
-                subject
-            ),
-            (
-                "Date",
-                date_s
-            ),
-            (
-                "Difficulty",
-                difficulty or "-"
-            ),
-            (
-                "Chapter",
-                chapter or "-"
-            ),
-            (
-                "Skill",
-                skill or "-"
-            ),
-            (
-                "ID",
-                assignment_id
-            ),
-        ]
-
-        dy = strip_y - 23
-
-        for lab, val in detail_rows:
-
-            c.setFont(
-                "Helvetica-Bold",
-                5.7
-            )
-
-            c.drawString(
-                45,
-                dy,
-                lab + ":"
-            )
-
-            draw_mixed_text(
-                c,
-                76,
-                dy,
-                val,
-                5.7,
-                False
-            )
-
-            dy -= 7.0
-
-        # --------------------------------------------------------
-        # QR
-        # --------------------------------------------------------
-
-        packet = make_packet(
-            payload,
-            qs,
-            total_q,
-            date_s,
-            {
-                "school": school,
-                "class_name": class_name,
-                "section": section,
-                "subject": subject,
-                "difficulty": difficulty,
-                "chapter": chapter,
-                "skill": skill,
-                "assignment_id": assignment_id
-            }
-        )
-
-        qr = qrcode.QRCode(
-            error_correction=qrcode.constants.ERROR_CORRECT_M,
-            box_size=2,
-            border=2
-        )
-
-        qr.add_data(packet)
-
-        qr.make(fit=True)
-
-        qr_img = qr.make_image(
-            fill_color="black",
-            back_color="white"
-        ).convert("RGB")
-
-        c.drawInlineImage(
-            qr_img,
-            45,
-            24,
-            48,
-            48
-        )
-
-        # --------------------------------------------------------
-        # ROLL NO BUBBLE GRID
-        # --------------------------------------------------------
-
-        roll_x = 140
-
-        c.setFont(
-            "Helvetica-Bold",
-            7.3
-        )
-
-        c.drawString(
-            roll_x,
-            strip_y - 12,
-            "ROLL NO"
-        )
-
-        for col in range(2):
-
-            bx = (
-                roll_x
-                + 6
-                + col * 18
-            )
-
-            for num in range(10):
-
-                by = (
-                    strip_y
-                    - 27
-                    - num * 8.0
-                )
-
-                c.circle(
-                    bx,
-                    by,
-                    3.0,
-                    stroke=1,
-                    fill=0
-                )
-
-                c.setFont(
-                    "Helvetica",
-                    4.5
-                )
-
-                c.drawCentredString(
-                    bx,
-                    by - 1.5,
-                    str(num)
-                )
-
-        # --------------------------------------------------------
-        # ANSWER STRIP
-        # --------------------------------------------------------
-
-        ans_x = 220
-
-        c.setFont(
-            "Helvetica-Bold",
-            7.3
-        )
-
-        c.drawString(
-            ans_x,
-            strip_y - 12,
-            "ANSWER STRIP (Mark One Option Only)"
-        )
-
-        ans_cols = (
-            2
-            if total_q <= 10
-            else 4
-        )
-
-        qpc = (
-            total_q
-            + ans_cols
-            - 1
-        ) // ans_cols
-
-        col_gap = 74
-
-        for qi in range(total_q):
-
-            ci = qi // qpc
-            ri = qi % qpc
-
-            qx = (
-                ans_x
-                + ci * col_gap
-            )
-
-            qy = (
-                strip_y
-                - 27
-                - ri * 10.0
-            )
-
-            c.setFont(
-                "Helvetica-Bold",
-                6.0
-            )
-
-            c.drawString(
-                qx,
-                qy - 2,
-                f"Q{qi + 1:02d}"
-            )
-
-            for oi, label in enumerate(
-                "ABCD"
-            ):
-
-                bx = (
-                    qx
-                    + 20
-                    + oi * 11.2
-                )
-
-                c.circle(
-                    bx,
-                    qy,
-                    3.15,
-                    stroke=1,
-                    fill=0
-                )
-
-                c.setFont(
-                    "Helvetica",
-                    4.4
-                )
-
-                c.drawCentredString(
-                    bx,
-                    qy - 1.45,
-                    label
-                )
-
-    # ============================================================
-    # BLOCK 2
-    # 21 - 40 QUESTIONS
-    # DEDICATED SINGLE A4 PAGE
-    # ============================================================
-
-    else:
 
         strip_y = 136
 
-        # --------------------------------------------------------
-        # COMPACT HEADER
-        # --------------------------------------------------------
+        school_font = 10.5
+        meta_font = 6.4
+        instruction_font = 5.9
 
-        if any('\u0900' <= ch <= '\u097F' for ch in school):
+    else:
 
-            draw_mixed_text(
-                c,
-                42,
-                height - 30,
-                school,
-                10.5,
-                True
-            )
-
-        else:
-
-            c.setFont(
-                "Helvetica-Bold",
-                10.5
-            )
-
-            c.drawString(
-                42,
-                height - 30,
-                school
-            )
-
-        meta_parts = []
-
-        if class_name:
-            meta_parts.append(
-                f"Class: {class_name}"
-            )
-
-        if section:
-            meta_parts.append(
-                f"Section: {section}"
-            )
-
-        if subject:
-            meta_parts.append(
-                f"Subject: {subject}"
-            )
-
-        meta = "  |  ".join(meta_parts)
-
-        draw_mixed_text(
-            c,
-            42,
-            height - 42,
-            meta,
-            6.4,
-            False
+        header_school_y = (
+            height - 34
         )
 
-        draw_mixed_text(
-            c,
-            42,
-            height - 54,
-            "निर्देश: सभी प्रश्नों के उत्तर नीचे दी गई OMR पट्टी में नीले/काले पेन से गोला भरकर दें।",
-            5.9,
-            False
+        header_meta_y = (
+            height - 48
         )
 
-        # --------------------------------------------------------
-        # NAME / ROLL BOX
-        # --------------------------------------------------------
+        instruction_y = (
+            height - 62
+        )
+
+        divider_y = (
+            height - 72
+        )
+
+        strip_y = 154
+
+        school_font = 12
+        meta_font = 7.2
+        instruction_font = 6.8
+
+    # ================================================================
+    # SCHOOL NAME
+    # ================================================================
+
+    draw_hindi_text(
+        c,
+        42,
+        header_school_y,
+        school_name,
+        school_font,
+        bold=True
+    )
+
+    # ================================================================
+    # CLASS / SECTION / SUBJECT
+    # ================================================================
+
+    header_meta = []
+
+    if class_name:
+        header_meta.append(
+            f"Class: {class_name}"
+        )
+
+    if section:
+        header_meta.append(
+            f"Section: {section}"
+        )
+
+    if subject:
+        header_meta.append(
+            f"Subject: {subject}"
+        )
+
+    draw_hindi_text(
+        c,
+        42,
+        header_meta_y,
+        "  |  ".join(
+            header_meta
+        ),
+        meta_font,
+        bold=False
+    )
+
+    # ================================================================
+    # INSTRUCTION
+    # ================================================================
+
+    draw_hindi_text(
+        c,
+        42,
+        instruction_y,
+        "निर्देश: सभी प्रश्नों के उत्तर नीचे दी गई ओएमआर पट्टी में नीले/काले पेन से गोला भरकर दें।",
+        instruction_font,
+        bold=False
+    )
+
+    # ================================================================
+    # STUDENT DETAILS BOX
+    # ================================================================
+
+    if is_40_block:
 
         rx = width - 214
         ry = height - 57
         rw = 172
         rh = 34
 
-        c.setLineWidth(.65)
+        label_font = 6.4
+
+        c.setLineWidth(
+            0.65
+        )
+
+    else:
+
+        rx = width - 220
+        ry = height - 62
+        rw = 180
+        rh = 41
+
+        label_font = 7.2
+
+        c.setLineWidth(
+            0.7
+        )
+
+    c.rect(
+        rx,
+        ry,
+        rw,
+        rh,
+        fill=0,
+        stroke=1
+    )
+
+    draw_hindi_text(
+        c,
+        rx + 7,
+        ry + (
+            22
+            if is_40_block
+            else 27
+        ),
+        "NAME:",
+        label_font,
+        bold=True
+    )
+
+    c.line(
+        rx + 42,
+        ry + (
+            21
+            if is_40_block
+            else 26
+        ),
+        rx + rw - 7,
+        ry + (
+            21
+            if is_40_block
+            else 26
+        )
+    )
+
+    draw_hindi_text(
+        c,
+        rx + 7,
+        ry + (
+            9
+            if is_40_block
+            else 11
+        ),
+        "ROLL NO:",
+        label_font,
+        bold=True
+    )
+
+    box_start_x = (
+        rx
+        + (
+            56
+            if is_40_block
+            else 58
+        )
+    )
+
+    box_y = (
+        ry
+        + (
+            5
+            if is_40_block
+            else 6
+        )
+    )
+
+    box_size = (
+        9.2
+        if is_40_block
+        else 11
+    )
+
+    box_gap = (
+        2.5
+        if is_40_block
+        else 3
+    )
+
+    for b in range(4):
 
         c.rect(
-            rx,
-            ry,
-            rw,
-            rh,
+            box_start_x
+            + (
+                b
+                * (
+                    box_size
+                    + box_gap
+                )
+            ),
+            box_y,
+            box_size,
+            box_size,
             fill=0,
             stroke=1
         )
 
-        c.setFont(
-            "Helvetica-Bold",
-            6.4
+    # ================================================================
+    # HEADER DIVIDER
+    # ================================================================
+
+    c.setLineWidth(
+        0.8
+    )
+
+    c.line(
+        40,
+        divider_y,
+        width - 40,
+        divider_y
+    )
+
+    # ================================================================
+    # QUESTION AREA
+    # ================================================================
+
+    question_top = (
+        height
+        - (
+            78
+            if is_40_block
+            else 84
+        )
+    )
+
+    question_bottom = (
+        strip_y
+        + 5
+    )
+
+    available_height = (
+        question_top
+        - question_bottom
+    )
+
+    # ================================================================
+    # BLOCK A: 10 / 20 QUESTIONS
+    # ================================================================
+
+    if total_q <= 20:
+
+        rows = (
+            total_q + 1
+        ) // 2
+
+        row_height = (
+            available_height
+            / rows
         )
 
-        c.drawString(
-            rx + 6,
-            ry + 22,
-            "NAME:"
+        col1_x = 42
+        col2_x = (
+            width / 2.0
+            + 7
         )
 
-        c.line(
-            rx + 39,
-            ry + 21,
-            rx + rw - 6,
-            ry + 21
+        col_width = (
+            width / 2.0
+            - 49
         )
 
-        c.drawString(
-            rx + 6,
-            ry + 9,
-            "ROLL NO:"
+        option_gap = 8
+
+        option_width = (
+            col_width
+            - option_gap
+        ) / 2.0
+
+        # Initial font sizes
+        question_font = (
+            8.0
+            if total_q <= 10
+            else 6.5
         )
 
-        bx = rx + 51
-        bs = 9.2
-        gap = 2.5
+        option_font = (
+            6.7
+            if total_q <= 10
+            else 5.2
+        )
 
-        for b in range(4):
+        for idx in range(
+            total_q
+        ):
 
-            c.rect(
-                bx + b * (bs + gap),
-                ry + 5,
-                bs,
-                bs,
-                fill=0,
-                stroke=1
+            if (
+                idx
+                < rows
+            ):
+                x = col1_x
+                row = idx
+            else:
+                x = col2_x
+                row = (
+                    idx - rows
+                )
+
+            top_y = (
+                question_top
+                - (
+                    row
+                    * row_height
+                )
             )
 
-        # --------------------------------------------------------
-        # HEADER DIVIDER
-        # --------------------------------------------------------
+            q_data = (
+                raw_questions[idx]
+                if (
+                    idx
+                    < len(
+                        raw_questions
+                    )
+                    and
+                    isinstance(
+                        raw_questions[idx],
+                        dict
+                    )
+                )
+                else {}
+            )
 
-        c.setLineWidth(.7)
+            q_text = str(
+                q_data.get(
+                    "question_text"
+                )
+                or q_data.get(
+                    "question"
+                )
+                or (
+                    f"प्रश्न संख्या "
+                    f"{idx + 1}"
+                )
+            )
 
-        c.line(
-            40,
-            height - 66,
-            width - 40,
-            height - 66
-        )
+            options = [
+                str(
+                    q_data.get(
+                        "opt_a"
+                    )
+                    or q_data.get(
+                        "option_a"
+                    )
+                    or "विकल्प A"
+                ),
+                str(
+                    q_data.get(
+                        "opt_b"
+                    )
+                    or q_data.get(
+                        "option_b"
+                    )
+                    or "विकल्प B"
+                ),
+                str(
+                    q_data.get(
+                        "opt_c"
+                    )
+                    or q_data.get(
+                        "option_c"
+                    )
+                    or "विकल्प C"
+                ),
+                str(
+                    q_data.get(
+                        "opt_d"
+                    )
+                    or q_data.get(
+                        "option_d"
+                    )
+                    or "विकल्प D"
+                )
+            ]
 
-        # --------------------------------------------------------
-        # 40 QUESTION AREA
-        # --------------------------------------------------------
+            q_font = question_font
+            o_font = option_font
 
-        q_top = height - 78
-        q_bottom = strip_y + 5
+            # --------------------------------------------------------
+            # Auto-fit
+            # --------------------------------------------------------
 
-        q_area_height = (
-            q_top
-            - q_bottom
-        )
+            for _ in range(25):
+
+                q_lines = wrap_text(
+                    q_text,
+                    col_width - 15,
+                    q_font,
+                    True
+                )
+
+                option_lines = [
+                    wrap_text(
+                        options[j],
+                        option_width - 14,
+                        o_font,
+                        False
+                    )
+                    for j in range(4)
+                ]
+
+                q_lh = (
+                    q_font
+                    * 1.10
+                )
+
+                o_lh = (
+                    o_font
+                    * 1.08
+                )
+
+                q_height = (
+                    len(q_lines)
+                    * q_lh
+                )
+
+                first_option_height = (
+                    max(
+                        len(
+                            option_lines[0]
+                        ),
+                        len(
+                            option_lines[1]
+                        )
+                    )
+                    * o_lh
+                )
+
+                second_option_height = (
+                    max(
+                        len(
+                            option_lines[2]
+                        ),
+                        len(
+                            option_lines[3]
+                        )
+                    )
+                    * o_lh
+                )
+
+                required_height = (
+                    q_height
+                    + first_option_height
+                    + second_option_height
+                    + 4
+                )
+
+                if (
+                    required_height
+                    <= row_height - 3
+                ):
+                    break
+
+                q_font = max(
+                    4.8,
+                    q_font - 0.15
+                )
+
+                o_font = max(
+                    4.4,
+                    o_font - 0.12
+                )
+
+            # --------------------------------------------------------
+            # QUESTION NUMBER
+            # --------------------------------------------------------
+
+            y = (
+                top_y - 2
+            )
+
+            draw_hindi_text(
+                c,
+                x,
+                y,
+                f"{idx + 1}.",
+                q_font,
+                bold=True
+            )
+
+            # --------------------------------------------------------
+            # QUESTION TEXT
+            # --------------------------------------------------------
+
+            for line_index, line in enumerate(
+                q_lines
+            ):
+
+                draw_hindi_text(
+                    c,
+                    x + 13,
+                    y - (
+                        line_index
+                        * q_lh
+                    ),
+                    line,
+                    q_font,
+                    bold=True
+                )
+
+            y -= (
+                len(q_lines)
+                * q_lh
+                + 1
+            )
+
+            # --------------------------------------------------------
+            # A / B
+            # --------------------------------------------------------
+
+            a_x = x
+
+            b_x = (
+                x
+                + option_width
+                + option_gap
+            )
+
+            draw_option(
+                "A",
+                options[0],
+                a_x,
+                y,
+                option_width,
+                o_font,
+                o_lh
+            )
+
+            draw_option(
+                "B",
+                options[1],
+                b_x,
+                y,
+                option_width,
+                o_font,
+                o_lh
+            )
+
+            first_option_lines = max(
+                len(
+                    option_lines[0]
+                ),
+                len(
+                    option_lines[1]
+                )
+            )
+
+            y2 = (
+                y
+                - (
+                    first_option_lines
+                    * o_lh
+                )
+                - 1
+            )
+
+            # --------------------------------------------------------
+            # C / D
+            # --------------------------------------------------------
+
+            draw_option(
+                "C",
+                options[2],
+                a_x,
+                y2,
+                option_width,
+                o_font,
+                o_lh
+            )
+
+            draw_option(
+                "D",
+                options[3],
+                b_x,
+                y2,
+                option_width,
+                o_font,
+                o_lh
+            )
+
+    # ================================================================
+    # BLOCK B: 21–40 QUESTIONS
+    # DEDICATED SINGLE-PAGE A4
+    # ================================================================
+
+    else:
 
         rows = 20
 
-        row_h = (
-            q_area_height
+        row_height = (
+            available_height
             / rows
         )
 
         col1_x = 40
         col2_x = 302
 
-        col_w = 248
+        col_width = 248
 
         option_gap = 7
 
-        option_w = (
-            col_w
+        option_width = (
+            col_width
             - option_gap
-        ) / 2
+        ) / 2.0
 
-        # --------------------------------------------------------
-        # QUESTION LOOP
-        # --------------------------------------------------------
+        base_question_font = 5.35
+        base_option_font = 4.45
 
-        for idx in range(total_q):
-
-            q = qs[idx]
-
-            def qv40(*keys, default=""):
-                for k in keys:
-                    v = q.get(k)
-
-                    if v not in (
-                        None,
-                        ""
-                    ):
-                        return str(v)
-
-                return default
-
-            qt = qv40(
-                "question_text",
-                "question",
-                default=f"प्रश्न संख्या {idx + 1}"
-            )
-
-            opts = [
-                qv40(
-                    "opt_a",
-                    "option_a",
-                    default="विकल्प A"
-                ),
-                qv40(
-                    "opt_b",
-                    "option_b",
-                    default="विकल्प B"
-                ),
-                qv40(
-                    "opt_c",
-                    "option_c",
-                    default="विकल्प C"
-                ),
-                qv40(
-                    "opt_d",
-                    "option_d",
-                    default="विकल्प D"
-                ),
-            ]
+        for idx in range(
+            total_q
+        ):
 
             if idx < 20:
-
                 x = col1_x
                 row = idx
-
             else:
-
                 x = col2_x
-                row = idx - 20
-
-            top = (
-                q_top
-                - row * row_h
-            )
-
-            qsize = 5.35
-            osize = 4.45
-
-            qlh = qsize * 1.05
-            olh = osize * 1.05
-
-            # ----------------------------------------------------
-            # AUTO FIT
-            # ----------------------------------------------------
-
-            for _ in range(30):
-
-                qlines = wrap_mixed(
-                    qt,
-                    col_w - 15,
-                    qsize,
-                    True,
-                    None
+                row = (
+                    idx - 20
                 )
 
-                olines = [
-                    wrap_mixed(
-                        opts[j],
-                        option_w - 15,
-                        osize,
-                        False,
-                        None
+            top_y = (
+                question_top
+                - (
+                    row
+                    * row_height
+                )
+            )
+
+            q_data = (
+                raw_questions[idx]
+                if (
+                    idx
+                    < len(
+                        raw_questions
+                    )
+                    and
+                    isinstance(
+                        raw_questions[idx],
+                        dict
+                    )
+                )
+                else {}
+            )
+
+            q_text = str(
+                q_data.get(
+                    "question_text"
+                )
+                or q_data.get(
+                    "question"
+                )
+                or (
+                    f"प्रश्न संख्या "
+                    f"{idx + 1}"
+                )
+            )
+
+            options = [
+                str(
+                    q_data.get(
+                        "opt_a"
+                    )
+                    or q_data.get(
+                        "option_a"
+                    )
+                    or "विकल्प A"
+                ),
+                str(
+                    q_data.get(
+                        "opt_b"
+                    )
+                    or q_data.get(
+                        "option_b"
+                    )
+                    or "विकल्प B"
+                ),
+                str(
+                    q_data.get(
+                        "opt_c"
+                    )
+                    or q_data.get(
+                        "option_c"
+                    )
+                    or "विकल्प C"
+                ),
+                str(
+                    q_data.get(
+                        "opt_d"
+                    )
+                    or q_data.get(
+                        "option_d"
+                    )
+                    or "विकल्प D"
+                )
+            ]
+
+            q_font = base_question_font
+            o_font = base_option_font
+
+            # --------------------------------------------------------
+            # AUTO-FIT FOR 40-Q PAGE
+            # --------------------------------------------------------
+
+            for _ in range(35):
+
+                q_lines = wrap_text(
+                    q_text,
+                    col_width - 15,
+                    q_font,
+                    True
+                )
+
+                option_lines = [
+                    wrap_text(
+                        options[j],
+                        option_width - 14,
+                        o_font,
+                        False
                     )
                     for j in range(4)
                 ]
 
-                qlh = (
-                    qsize
+                q_lh = (
+                    q_font
                     * 1.05
                 )
 
-                olh = (
-                    osize
+                o_lh = (
+                    o_font
                     * 1.05
                 )
 
                 q_height = (
-                    len(qlines)
-                    * qlh
+                    len(q_lines)
+                    * q_lh
                 )
 
                 ab_height = (
                     max(
-                        len(olines[0]),
-                        len(olines[1])
+                        len(
+                            option_lines[0]
+                        ),
+                        len(
+                            option_lines[1]
+                        )
                     )
-                    * olh
+                    * o_lh
                 )
 
                 cd_height = (
                     max(
-                        len(olines[2]),
-                        len(olines[3])
+                        len(
+                            option_lines[2]
+                        ),
+                        len(
+                            option_lines[3]
+                        )
                     )
-                    * olh
+                    * o_lh
                 )
 
                 required_height = (
                     q_height
-                    + 1.5
                     + ab_height
                     + cd_height
-                    + 2
+                    + 4
                 )
 
                 if (
                     required_height
-                    <= row_h - 2
+                    <= row_height - 2
                 ):
                     break
 
-                qsize = max(
+                q_font = max(
                     3.75,
-                    qsize - 0.12
+                    q_font - 0.12
                 )
 
-                osize = max(
+                o_font = max(
                     3.45,
-                    osize - 0.10
+                    o_font - 0.10
                 )
 
-            # ----------------------------------------------------
-            # QUESTION NUMBER + TEXT
-            # ----------------------------------------------------
+            # --------------------------------------------------------
+            # QUESTION NUMBER
+            # --------------------------------------------------------
 
             y = (
-                top
-                - 1
+                top_y - 1
             )
 
-            c.setFont(
-                "Helvetica-Bold",
-                qsize
-            )
-
-            c.drawString(
+            draw_hindi_text(
+                c,
                 x,
                 y,
-                f"{idx + 1}."
+                f"{idx + 1}.",
+                q_font,
+                bold=True
             )
 
-            for li, line in enumerate(
-                qlines
+            # --------------------------------------------------------
+            # QUESTION TEXT
+            # --------------------------------------------------------
+
+            for line_index, line in enumerate(
+                q_lines
             ):
 
-                draw_mixed_text(
+                draw_hindi_text(
                     c,
                     x + 11,
-                    y - li * qlh,
+                    y - (
+                        line_index
+                        * q_lh
+                    ),
                     line,
-                    qsize,
-                    True
+                    q_font,
+                    bold=True
                 )
 
             y -= (
-                len(qlines)
-                * qlh
+                len(q_lines)
+                * q_lh
                 + 1.2
             )
 
-            # ----------------------------------------------------
-            # OPTIONS A / B
-            # ----------------------------------------------------
+            # --------------------------------------------------------
+            # A / B
+            # --------------------------------------------------------
 
-            first_row_y = y
+            a_x = x
 
-            for j in (0, 1):
+            b_x = (
+                x
+                + option_width
+                + option_gap
+            )
 
-                cc = j
+            draw_option(
+                "A",
+                options[0],
+                a_x,
+                y,
+                option_width,
+                o_font,
+                o_lh
+            )
 
-                ox = (
-                    x
-                    + cc
-                    * (
-                        option_w
-                        + option_gap
-                    )
-                )
-
-                c.setFont(
-                    "Helvetica",
-                    osize
-                )
-
-                c.drawString(
-                    ox,
-                    first_row_y,
-                    f"({chr(65 + j)})"
-                )
-
-                for li, line in enumerate(
-                    olines[j]
-                ):
-
-                    draw_mixed_text(
-                        c,
-                        ox + 10,
-                        first_row_y
-                        - li * olh,
-                        line,
-                        osize,
-                        False
-                    )
-
-            # ----------------------------------------------------
-            # OPTIONS C / D
-            # ----------------------------------------------------
+            draw_option(
+                "B",
+                options[1],
+                b_x,
+                y,
+                option_width,
+                o_font,
+                o_lh
+            )
 
             ab_lines = max(
-                len(olines[0]),
-                len(olines[1])
+                len(
+                    option_lines[0]
+                ),
+                len(
+                    option_lines[1]
+                )
             )
 
-            second_row_y = (
-                first_row_y
-                - ab_lines * olh
-                - 1.0
+            y2 = (
+                y
+                - (
+                    ab_lines
+                    * o_lh
+                )
+                - 1
             )
 
-            for j in (2, 3):
+            # --------------------------------------------------------
+            # C / D
+            # --------------------------------------------------------
 
-                cc = j - 2
+            draw_option(
+                "C",
+                options[2],
+                a_x,
+                y2,
+                option_width,
+                o_font,
+                o_lh
+            )
 
-                ox = (
-                    x
-                    + cc
-                    * (
-                        option_w
-                        + option_gap
+            draw_option(
+                "D",
+                options[3],
+                b_x,
+                y2,
+                option_width,
+                o_font,
+                o_lh
+            )
+
+    # ================================================================
+    # BOTTOM OMR SECTION
+    # ================================================================
+
+    c.setLineWidth(
+        1
+    )
+
+    c.line(
+        40,
+        strip_y,
+        width - 40,
+        strip_y
+    )
+
+    # ================================================================
+    # TEST DETAILS
+    # ================================================================
+
+    details_x = 42
+
+    if is_40_block:
+
+        details_title_size = 6.4
+        details_font_size = 4.9
+        details_gap = 6.0
+
+    else:
+
+        details_title_size = 7.3
+        details_font_size = 5.7
+        details_gap = 7.0
+
+    draw_hindi_text(
+        c,
+        details_x,
+        strip_y - 11,
+        "TEST DETAILS",
+        details_title_size,
+        bold=True
+    )
+
+    detail_values = [
+        (
+            "Class/Sec",
+            " ".join(
+                [
+                    v
+                    for v in (
+                        class_name,
+                        section
                     )
-                )
-
-                c.setFont(
-                    "Helvetica",
-                    osize
-                )
-
-                c.drawString(
-                    ox,
-                    second_row_y,
-                    f"({chr(65 + j)})"
-                )
-
-                for li, line in enumerate(
-                    olines[j]
-                ):
-
-                    draw_mixed_text(
-                        c,
-                        ox + 10,
-                        second_row_y
-                        - li * olh,
-                        line,
-                        osize,
-                        False
-                    )
-
-        # --------------------------------------------------------
-        # BOTTOM DIVIDER
-        # --------------------------------------------------------
-
-        c.setLineWidth(.9)
-
-        c.line(
-            40,
-            strip_y,
-            width - 40,
-            strip_y
-        )
-
-        # --------------------------------------------------------
-        # TEST DETAILS
-        # --------------------------------------------------------
-
-        c.setFont(
-            "Helvetica-Bold",
-            6.4
-        )
-
-        c.drawString(
-            42,
-            strip_y - 11,
-            "TEST DETAILS"
-        )
-
-        detail_rows_40 = [
-            (
-                "Class/Sec",
-                " ".join(
-                    [
-                        v
-                        for v in (
-                            class_name,
-                            section
-                        )
-                        if v
-                    ]
-                )
-            ),
-            (
-                "Subject",
-                subject
-            ),
-            (
-                "Date",
-                date_s
-            ),
-            (
-                "Difficulty",
-                difficulty or "-"
-            ),
-            (
-                "Chapter",
-                chapter or "-"
-            ),
-            (
-                "Skill",
-                skill or "-"
-            ),
-            (
-                "ID",
-                assignment_id
-            ),
-        ]
-
-        dy = strip_y - 21
-
-        for lab, val in detail_rows_40:
-
-            c.setFont(
-                "Helvetica-Bold",
-                4.9
+                    if v
+                ]
             )
-
-            c.drawString(
-                42,
-                dy,
-                lab + ":"
+        ),
+        (
+            "Subject",
+            subject
+        ),
+        (
+            "Date",
+            datetime.now().strftime(
+                "%d-%b-%Y"
             )
+        ),
+        (
+            "Difficulty",
+            difficulty or "-"
+        ),
+        (
+            "Chapter",
+            chapter or "-"
+        ),
+        (
+            "Skill",
+            skill or "-"
+        ),
+        (
+            "ID",
+            assignment_id
+        )
+    ]
 
-            draw_mixed_text(
-                c,
-                78,
-                dy,
-                val,
-                4.9,
-                False
-            )
+    details_y = (
+        strip_y - 21
+    )
 
-            dy -= 6.0
+    for label, value in detail_values:
 
-        # --------------------------------------------------------
-        # QR
-        # --------------------------------------------------------
-
-        packet = make_packet(
-            payload,
-            qs,
-            total_q,
-            date_s,
-            {
-                "school": school,
-                "class_name": class_name,
-                "section": section,
-                "subject": subject,
-                "difficulty": difficulty,
-                "chapter": chapter,
-                "skill": skill,
-                "assignment_id": assignment_id
-            }
+        text_line = (
+            f"{label}: "
+            f"{value}"
         )
 
-        qr = qrcode.QRCode(
-            error_correction=qrcode.constants.ERROR_CORRECT_M,
-            box_size=2,
-            border=2
+        draw_hindi_text(
+            c,
+            details_x,
+            details_y,
+            text_line,
+            details_font_size,
+            bold=False
         )
 
-        qr.add_data(packet)
+        details_y -= details_gap
 
-        qr.make(fit=True)
+    # ================================================================
+    # QR CODE
+    # KEEP EXISTING QR DATA UNCHANGED
+    # ================================================================
 
-        qr_img = qr.make_image(
+    qr = qrcode.QRCode(
+        box_size=2,
+        border=0
+    )
+
+    qr_data = (
+        f"ID:{payload.get('assignment_id')}"
+        f"|CLS:{payload.get('class_name')}"
+    )
+
+    qr.add_data(
+        qr_data
+    )
+
+    qr.make(
+        fit=True
+    )
+
+    qr_img = (
+        qr.make_image(
             fill_color="black",
             back_color="white"
-        ).convert("RGB")
-
-        c.drawInlineImage(
-            qr_img,
-            42,
-            21,
-            48,
-            48
         )
+        .convert("RGB")
+    )
 
-        # --------------------------------------------------------
-        # ROLL NO BUBBLE GRID
-        # --------------------------------------------------------
+    c.drawInlineImage(
+        qr_img,
+        42,
+        21 if is_40_block else 24,
+        48,
+        48
+    )
+
+    # ================================================================
+    # ROLL NUMBER BUBBLE GRID
+    # ================================================================
+
+    if is_40_block:
 
         roll_x = 105
+        roll_title_y = (
+            strip_y - 11
+        )
+        roll_start_y = (
+            strip_y - 25
+        )
+        roll_gap_y = 8.0
+        roll_radius = 3.0
+        roll_font = 4.2
 
-        c.setFont(
-            "Helvetica-Bold",
-            6.4
+    else:
+
+        roll_x = 140
+        roll_title_y = (
+            strip_y - 12
+        )
+        roll_start_y = (
+            strip_y - 27
+        )
+        roll_gap_y = 8.0
+        roll_radius = 3.0
+        roll_font = 4.5
+
+    draw_hindi_text(
+        c,
+        roll_x,
+        roll_title_y,
+        "ROLL NO",
+        7.3 if not is_40_block else 6.4,
+        bold=True
+    )
+
+    for col_r in range(2):
+
+        bx = (
+            roll_x
+            + 7
+            + (
+                col_r * 18
+            )
         )
 
-        c.drawString(
-            roll_x,
-            strip_y - 11,
-            "ROLL NO"
+        for num in range(10):
+
+            by = (
+                roll_start_y
+                - (
+                    num
+                    * roll_gap_y
+                )
+            )
+
+            c.circle(
+                bx,
+                by,
+                roll_radius,
+                stroke=1,
+                fill=0
+            )
+
+            draw_hindi_text(
+                c,
+                bx - 1.5,
+                by - 1.4,
+                str(num),
+                roll_font,
+                bold=False
+            )
+
+    # ================================================================
+    # ANSWER STRIP
+    # ================================================================
+
+    ans_x = (
+        198
+        if is_40_block
+        else 220
+    )
+
+    answer_title_size = (
+        6.4
+        if is_40_block
+        else 7.3
+    )
+
+    draw_hindi_text(
+        c,
+        ans_x,
+        strip_y - 11,
+        "ANSWER STRIP (Mark One Option Only)",
+        answer_title_size,
+        bold=True
+    )
+
+    if total_q <= 10:
+
+        answer_columns = 2
+
+    elif total_q <= 20:
+
+        answer_columns = 4
+
+    else:
+
+        answer_columns = 4
+
+    q_per_answer_column = (
+        total_q
+        + answer_columns
+        - 1
+    ) // answer_columns
+
+    answer_col_gap = (
+        76
+        if is_40_block
+        else 74
+    )
+
+    for q_i in range(
+        total_q
+    ):
+
+        col_index = (
+            q_i
+            // q_per_answer_column
         )
 
-        for col in range(2):
-
-            bx = (
-                roll_x
-                + 7
-                + col * 18
-            )
-
-            for num in range(10):
-
-                by = (
-                    strip_y
-                    - 25
-                    - num * 8.0
-                )
-
-                c.circle(
-                    bx,
-                    by,
-                    3.0,
-                    stroke=1,
-                    fill=0
-                )
-
-                c.setFont(
-                    "Helvetica",
-                    4.2
-                )
-
-                c.drawCentredString(
-                    bx,
-                    by - 1.4,
-                    str(num)
-                )
-
-        # --------------------------------------------------------
-        # ANSWER STRIP
-        # 40 QUESTIONS = 4 COLUMNS x 10 ROWS
-        # --------------------------------------------------------
-
-        ans_x = 198
-
-        c.setFont(
-            "Helvetica-Bold",
-            6.4
+        row_index = (
+            q_i
+            % q_per_answer_column
         )
 
-        c.drawString(
-            ans_x,
-            strip_y - 11,
-            "ANSWER STRIP (Mark One Option Only)"
+        q_x = (
+            ans_x
+            + (
+                col_index
+                * answer_col_gap
+            )
         )
 
-        ans_cols = 4
-
-        qpc = (
-            total_q
-            + ans_cols
-            - 1
-        ) // ans_cols
-
-        col_gap = 76
-
-        for qi in range(total_q):
-
-            ci = qi // qpc
-            ri = qi % qpc
-
-            qx = (
-                ans_x
-                + ci * col_gap
+        q_y = (
+            strip_y
+            - (
+                25
+                if is_40_block
+                else 27
             )
-
-            qy = (
-                strip_y
-                - 25
-                - ri * 10.0
+            - (
+                row_index
+                * 10
             )
+        )
 
-            c.setFont(
-                "Helvetica-Bold",
-                5.4
-            )
+        draw_hindi_text(
+            c,
+            q_x,
+            q_y - 2,
+            f"Q{q_i + 1:02d}",
+            5.4 if is_40_block else 6.0,
+            bold=True
+        )
 
-            c.drawString(
-                qx,
-                qy - 1.8,
-                f"Q{qi + 1:02d}"
-            )
+        for o_i, o_label in enumerate(
+            ["A", "B", "C", "D"]
+        ):
 
-            for oi, label in enumerate(
-                "ABCD"
-            ):
+            if is_40_block:
 
                 bx = (
-                    qx
+                    q_x
                     + 19
-                    + oi * 10.5
+                    + (
+                        o_i
+                        * 10.5
+                    )
                 )
 
-                c.circle(
-                    bx,
-                    qy,
-                    3.0,
-                    stroke=1,
-                    fill=0
+                bubble_radius = 3.0
+                label_size = 4.0
+                label_offset = 1.35
+
+            else:
+
+                bx = (
+                    q_x
+                    + 20
+                    + (
+                        o_i
+                        * 11.2
+                    )
                 )
 
-                c.setFont(
-                    "Helvetica",
-                    4.0
-                )
+                bubble_radius = 3.15
+                label_size = 4.4
+                label_offset = 1.45
 
-                c.drawCentredString(
-                    bx,
-                    qy - 1.35,
-                    label
-                )
+            c.circle(
+                bx,
+                q_y,
+                bubble_radius,
+                stroke=1,
+                fill=0
+            )
 
-    # ============================================================
-    # FINALIZE PDF
-    # ============================================================
+            draw_hindi_text(
+                c,
+                bx - 1.5,
+                q_y - label_offset,
+                o_label,
+                label_size,
+                bold=False
+            )
+
+    # ================================================================
+    # FINISH PDF
+    # ================================================================
 
     c.showPage()
+
     c.save()
 
     buffer.seek(0)
