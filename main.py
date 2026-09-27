@@ -2389,54 +2389,195 @@ async def generate_omr_pdf(
                 "Request body must be a JSON object."
             )
 
+
+        # -----------------------------------------------------------
+        # ALIGN OMR READ RESULT
+        # -----------------------------------------------------------
+
+        # ------------------ HELPER 1: काले कोनों से पेज सीधा करना ------------------
+def align_omr_sheet(img):
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    thresh = cv2.adaptiveThreshold(
+        blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2
+    )
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    corners = []
+    for c in contours:
+        peri = cv2.arcLength(c, True)
+        approx = cv2.approxPolyDP(c, 0.04 * peri, True)
+        if len(approx) == 4:
+            area = cv2.contourArea(c)
+            if (img.shape[0] * img.shape[1] * 0.0005) < area < (img.shape[0] * img.shape[1] * 0.02):
+                x, y, w, h = cv2.boundingRect(approx)
+                if 0.8 <= float(w) / h <= 1.2:
+                    M = cv2.moments(c)
+                    if M["m00"] != 0:
+                        corners.append([int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"])])
+
+    if len(corners) == 4:
+        pts = np.array(corners, dtype="float32")
+        s = pts.sum(axis=1)
+        diff = np.diff(pts, axis=1)
+        rect = np.zeros((4, 2), dtype="float32")
+        rect[0] = pts[np.argmin(s)]
+        rect[2] = pts[np.argmax(s)]
+        rect[1] = pts[np.argmin(diff)]
+        rect[3] = pts[np.argmax(diff)]
+
+        target_w, target_h = 1200, 1600
+        dst = np.array([[0, 0], [target_w - 1, 0], [target_w - 1, target_h - 1], [0, target_h - 1]], dtype="float32")
+        matrix = cv2.getPerspectiveTransform(rect, dst)
+        return cv2.warpPerspective(img, matrix, (target_w, target_h))
+
+    return cv2.resize(img, (1200, 1600))
+
+
+# ------------------ HELPER 2: निचले OMR स्ट्रिप से उत्तर पढ़ना ------------------
+def read_answers_from_sheet(sheet_img, total_q=20):
+    gray = cv2.cvtColor(sheet_img, cv2.COLOR_BGR2GRAY)
+    _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
+
+    h, w = sheet_img.shape[:2]
+    omr_roi = thresh[int(h * 0.78):int(h * 0.95), int(w * 0.40):int(w * 0.85)]
+    detected_answers = {}
+
+    cols_count = 4 if total_q > 10 else 2
+    q_per_col = 5
+    bubble_w = omr_roi.shape[1] / cols_count
+    bubble_h = omr_roi.shape[0] / q_per_col
+
+    q_idx = 1
+    for c_i in range(cols_count):
+        for r_i in range(q_per_col):
+            if q_idx > total_q:
+                break
+            box_x = int(c_i * bubble_w)
+            box_y = int(r_i * bubble_h)
+            box_w = int(bubble_w)
+            box_h = int(bubble_h)
+
+            question_box = omr_roi[box_y:box_y+box_h, box_x:box_x+box_w]
+            opt_w = box_w / 4.0
+            density = []
+
+            for opt_idx in range(4):
+                ox = int(opt_idx * opt_w)
+                opt_cell = question_box[:, ox:int(ox + opt_w)]
+                density.append(cv2.countNonZero(opt_cell))
+
+            max_val = max(density)
+            if max_val > (box_h * opt_w * 0.22):
+                best_opt = ["A", "B", "C", "D"][density.index(max_val)]
+                detected_answers[str(q_idx)] = best_opt
+            else:
+                detected_answers[str(q_idx)] = None
+
+            q_idx += 1
+
+    return detected_answers
+
+
+
+        
         # -----------------------------------------------------------
         # GENERATE PDF
         # -----------------------------------------------------------
+# Action चेक करें: अगर FlutterFlow से कुछ न भेजा जाए तो पुराना PDF जनरेशन ही चलेगा
+        action = payload.get("action", "generate_pdf")
 
-        pdf_bytes = generate_hybrid_omr_pdf(
-            payload
-        )
+        # ==================== MODE 1: पुरानी PDF जनरेशन (100% सुरक्षित) ====================
+        if action == "generate_pdf":
+            pdf_bytes = generate_hybrid_omr_pdf(payload)
 
-        # -----------------------------------------------------------
-        # FILE NAME
-        # -----------------------------------------------------------
+            today_date = datetime.now().strftime("%d-%m-%Y")
+            unique_token = str(uuid.uuid4())[:8]
+            file_name = f"OMR_Exam_{today_date}_{unique_token}.pdf"
 
-        today_date = (
-            datetime.now().strftime(
-                "%d-%m-%Y"
-            )
-        )
+            download_url = upload_to_supabase(pdf_bytes, file_name)
 
-        unique_token = (
-            str(
-                uuid.uuid4()
-            )[:8]
-        )
+            return {
+                "success": True,
+                "download_url": download_url,
+                "file_name": file_name
+            }
 
-        file_name = (
-            f"OMR_Exam_"
-            f"{today_date}_"
-            f"{unique_token}.pdf"
-        )
+        # ==================== MODE 2: OMR मूल्यांकन (1 से 100 पन्ने ऑटो रीड) ====================
+        elif action == "evaluate_omr":
+            file_path = payload.get("file_path") or payload.get("file_url")
+            answer_key = payload.get("answer_key", {})
+            total_q = int(payload.get("total_questions", 20))
+            assignment_id = payload.get("assignment_id")
+            chapter_no = payload.get("chapter_no", 1)
 
-        # -----------------------------------------------------------
-        # SUPABASE
-        # -----------------------------------------------------------
+            if not file_path:
+                raise HTTPException(status_code=400, detail="file_path is required")
 
-        download_url = (
-            upload_to_supabase(
-                pdf_bytes,
-                file_name
-            )
-        )
+            # 1. Supabase बकेट (answer_sheets) से PDF डाउनलोड करें
+            if str(file_path).startswith("http"):
+                resp = requests.get(file_path)
+                file_bytes = resp.content
+            else:
+                # यदि केवल फाइल का नाम भेजा गया हो
+                clean_name = str(file_path).split("/")[-1]
+                file_bytes = supabase.storage.from_("answer_sheets").download(clean_name)
 
-        # IMPORTANT:
-        # Keep the original response key used by FlutterFlow.
-        return {
-            "success": True,
-            "download_url": download_url,
-            "file_name": file_name
-        }
+            # 2. PDF लोड करें (1 पेज हो या 100 पेज)
+            pdf = pdfium.PdfDocument(file_bytes)
+            total_pages = len(pdf)
+
+            all_evaluations = []
+
+            for page_idx in range(total_pages):
+                page = pdf[page_idx]
+                pil_img = page.render(scale=2.0).to_pil()
+                img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+
+                # इमेज सीधा करना व OMR स्ट्रिप से उत्तर पढ़ना
+                aligned_img = align_omr_sheet(img)
+                student_answers = read_answers_from_sheet(aligned_img, total_q)
+
+                # स्कोर और अंकों की गणना
+                score = 0
+                for q in range(1, total_q + 1):
+                    s_ans = student_answers.get(str(q))
+                    c_ans = answer_key.get(str(q))
+                    if c_ans and s_ans == c_ans:
+                        score += 1
+
+                # ज़ोन तय करना (Red, Yellow, Green)
+                percentage = (score / total_q) * 100 if total_q > 0 else 0
+                if percentage >= 75:
+                    zone = "green"
+                elif percentage >= 40:
+                    zone = "yellow"
+                else:
+                    zone = "red"
+
+                # आपकी Supabase की 'test_evaluations' टेबल के अनुसार रिकॉर्ड तैयार करना
+                eval_row = {
+                    "assignment_id": assignment_id,
+                    "chapter_no": chapter_no,
+                    "score": score,
+                    "total_marks": total_q,
+                    "zone": zone,
+                    "raw_answers": student_answers,
+                    "roll_no": page_idx + 1  # या बबल्स/QR से रीड किया गया रोल नंबर
+                }
+                all_evaluations.append(eval_row)
+
+            # 3. सीधे test_evaluations टेबल में बल्क इन्सर्ट करना
+            supabase.table("test_evaluations").insert(all_evaluations).execute()
+
+            return {
+                "success": True,
+                "total_sheets_processed": total_pages,
+                "evaluations": all_evaluations
+            }
+
+        else:
+            raise HTTPException(status_code=400, detail="Invalid action")
+
 
     except HTTPException:
 
