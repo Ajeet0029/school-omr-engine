@@ -1946,48 +1946,19 @@ def generate_hybrid_omr_pdf(
 
     if is_40_block:
 
-        roll_x = 105
-        roll_title_y = (
-            strip_y - 11
-        )
-        roll_start_y = (
-            strip_y - 25
-        )
-        roll_gap_y = 8.0
-        roll_radius = 3.0
-        roll_font = 4.2
-
+        roll_x = 105 roll_title_y = ( strip_y - 11 ) roll_start_y = ( strip_y - 25 )
+        roll_gap_y = 8.0 roll_radius = 3.0 roll_font = 4.2
     else:
-
-        roll_x = 140
-        roll_title_y = (
-            strip_y - 12
-        )
-        roll_start_y = (
-            strip_y - 27
-        )
-        roll_gap_y = 8.0
-        roll_radius = 3.0
-        roll_font = 4.5
+        roll_x = 140 roll_title_y = ( strip_y - 12 ) roll_start_y = ( strip_y - 27 )
+        roll_gap_y = 8.0 roll_radius = 3.0 roll_font = 4.5
 
     draw_hindi_text(
-        c,
-        roll_x,
-        roll_title_y,
-        "ROLL NO",
-        7.3 if not is_40_block else 6.4,
-        bold=True
-    )
+        c, roll_x, roll_title_y, "ROLL NO", 7.3 if not is_40_block else 6.4,
+        bold=True )
 
     for col_r in range(2):
 
-        bx = (
-            roll_x
-            + 7
-            + (
-                col_r * 18
-            )
-        )
+        bx = ( roll_x + 7 + ( col_r * 18 ) )
 
         for num in range(10):
 
