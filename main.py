@@ -2335,62 +2335,7 @@ def upload_to_supabase(
         f"{signed_url_path}"
     )
 
-
-# =====================================================================
-# 8. MAIN API ENDPOINT
-# =====================================================================
-
-@app.post(
-    "/generate-omr-pdf",
-    dependencies=[
-        Security(
-            verify_api_key
-        )
-    ]
-)
-async def generate_omr_pdf(
-    request: Request
-):
-
-    try:
-
-        data = await request.json()
-
-        # -----------------------------------------------------------
-        # Preserve compatibility with existing FlutterFlow.
-        #
-        # Accept:
-        # { ... }
-        #
-        # OR:
-        # {"data": {...}}
-        # -----------------------------------------------------------
-
-        if (
-            isinstance(data, dict)
-            and isinstance(
-                data.get("data"),
-                dict
-            )
-        ):
-
-            payload = data["data"]
-
-        else:
-
-            payload = data
-
-        if not isinstance(
-            payload,
-            dict
-        ):
-
-            raise ValueError(
-                "Request body must be a JSON object."
-            )
-
-
-        # -----------------------------------------------------------
+# -----------------------------------------------------------
         # ALIGN OMR READ RESULT
         # -----------------------------------------------------------
 
@@ -2477,6 +2422,65 @@ def read_answers_from_sheet(sheet_img, total_q=20):
 
     return detected_answers
 
+
+
+
+
+# =====================================================================
+# 8. MAIN API ENDPOINT
+# =====================================================================
+
+@app.post(
+    "/generate-omr-pdf",
+    dependencies=[
+        Security(
+            verify_api_key
+        )
+    ]
+)
+async def generate_omr_pdf(
+    request: Request
+):
+
+    try:
+
+        data = await request.json()
+
+        # -----------------------------------------------------------
+        # Preserve compatibility with existing FlutterFlow.
+        #
+        # Accept:
+        # { ... }
+        #
+        # OR:
+        # {"data": {...}}
+        # -----------------------------------------------------------
+
+        if (
+            isinstance(data, dict)
+            and isinstance(
+                data.get("data"),
+                dict
+            )
+        ):
+
+            payload = data["data"]
+
+        else:
+
+            payload = data
+
+        if not isinstance(
+            payload,
+            dict
+        ):
+
+            raise ValueError(
+                "Request body must be a JSON object."
+            )
+
+
+        
 
 
         
