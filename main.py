@@ -2601,6 +2601,81 @@ async def generate_omr_pdf(
         )
 
 
+
+# ==================== ScanOMR ENDPOINT ====================
+@app.post("/scan-omr")  # नोट: अगर FlutterFlow में एंडपॉइंट का नाम अलग है तो वही नाम रखें
+async def scan_omr_endpoint(request: Request):
+    try:
+        data = await request.json()
+        payload = data.get("data", data) if isinstance(data, dict) else {}
+
+        # FlutterFlow से आने वाला image_url
+        image_url = payload.get("image_url")
+        if not image_url:
+            raise HTTPException(status_code=400, detail="image_url is required")
+
+        # 1. Supabase Storage से फ़ाइल लोड करना
+        resp = requests.get(image_url)
+        if resp.status_code != 200:
+            raise HTTPException(status_code=400, detail="Failed to fetch uploaded PDF")
+        
+        file_bytes = resp.content
+
+        # 2. PDF लोड करना (चाहे 1 पेज हो या 100 पेज)
+        pdf = pdfium.PdfDocument(file_bytes)
+        total_pages = len(pdf)
+
+        all_evaluations = []
+
+        for page_idx in range(total_pages):
+            page = pdf[page_idx]
+            pil_img = page.render(scale=2.0).to_pil()
+            img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+
+            # पेज सीधा करके बबल्स पढ़ना
+            aligned_img = align_omr_sheet(img)
+            student_answers = read_answers_from_sheet(aligned_img, total_q=20)
+
+            # छात्र द्वारा भरे गए कुल प्रश्नों की संख्या (Score)
+            attempted = sum(1 for v in student_answers.values() if v is not None)
+            total_marks = 20
+
+            # ज़ोन तय करना
+            pct = (attempted / total_marks) * 100
+            zone = "green" if pct >= 75 else ("yellow" if pct >= 40 else "red")
+
+            # आपकी test_evaluations टेबल का ढांचा
+            eval_row = {
+                "chapter_no": 1,
+                "score": attempted,
+                "total_marks": total_marks,
+                "zone": zone,
+                "raw_answers": student_answers,
+                "roll_no": page_idx + 1
+            }
+            all_evaluations.append(eval_row)
+
+        # 3. सीधे आपकी Supabase की 'test_evaluations' टेबल में सेव करना
+        supabase.table("test_evaluations").insert(all_evaluations).execute()
+
+        # FlutterFlow के लिए Success रिस्पॉन्स (apiResult -> Succeeded = True)
+        return {
+            "success": True,
+            "total_processed": total_pages,
+            "data": all_evaluations
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"OMR Error: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+
 # =====================================================================
 # 9. HEALTH CHECK
 # =====================================================================
