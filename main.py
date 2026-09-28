@@ -2649,7 +2649,7 @@ async def scan_omr_endpoint(request: Request):
 
             # आपकी test_evaluations टेबल का ढांचा
             eval_row = {
-                "student_id": payload.get("student_id"), or "662ee381-50d2-4df8-93d1-29361bd8bdad",
+                "student_id": payload.get("student_id") or "111ee111-50d2-4df8-93d1-29361bd8bdad",
                 "assignment_id": payload.get("assignment_id") or "c0000000-0000-0000-0000-000000000001",
                 "chapter_no": 1,
                 "test_type": dynamic_test_type,
