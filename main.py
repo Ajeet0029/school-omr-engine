@@ -2664,6 +2664,7 @@ async def scan_omr_endpoint(request: Request):
         replace_existing = payload.get("replace_existing", False)
         assignment_id = payload.get("assignment_id")
 
+        is_updated = False
         if assignment_id:
             existing = supabase.table("test_evaluations") \
                 .select("id") \
@@ -2671,24 +2672,27 @@ async def scan_omr_endpoint(request: Request):
                 .eq("roll_no", page_idx + 1) \
                 .execute()
 
-            # अगर पहले से है और यूज़र ने रिप्लेस (Replace) की परमिशन नहीं दी:
+            # यदि रिकॉर्ड पहले से मौजूद है और replace_existing False है
             if existing.data and not replace_existing:
                 raise HTTPException(
                     status_code=409,
                     detail=f"पेज {page_idx + 1} (Roll No: {page_idx + 1}) पहले से अपलोड है!"
                 )
             
-            # अगर पहले से है और यूज़र ने रिप्लेस करने को कहा है:
+            # यदि रिकॉर्ड पहले से मौजूद है और रिप्लेस करना है
             elif existing.data and replace_existing:
                 supabase.table("test_evaluations") \
                     .update(eval_row) \
                     .eq("assignment_id", assignment_id) \
                     .eq("roll_no", page_idx + 1) \
                     .execute()
-                continue
+                is_updated = True
 
-        # अगर नया रिकॉर्ड है तो लिस्ट में जोड़ें
-        all_evaluations.append(eval_row)
+        # अगर नया रिकॉर्ड है (अपडेट नहीं हुआ), तभी इंसर्ट लिस्ट में जोड़ें
+        if not is_updated:
+            all_evaluations.append(eval_row)
+
+
     
 
         # 3. सीधे आपकी Supabase की 'test_evaluations' टेबल में सेव करना
