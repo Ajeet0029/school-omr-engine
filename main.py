@@ -25,6 +25,9 @@ from reportlab.lib.utils import ImageReader
 
 import requests
 
+import pypdfium2 as pdfium
+import cv2
+import numpy as np
 
 # =====================================================================
 # APP
