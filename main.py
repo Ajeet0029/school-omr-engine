@@ -2659,7 +2659,37 @@ async def scan_omr_endpoint(request: Request):
                 "raw_answers": student_answers,
                 "roll_no": page_idx + 1
             }
-            all_evaluations.append(eval_row)
+
+             # 2. डुप्लीकेट चेक करना
+        replace_existing = payload.get("replace_existing", False)
+        assignment_id = payload.get("assignment_id")
+
+        if assignment_id:
+            existing = supabase.table("test_evaluations") \
+                .select("id") \
+                .eq("assignment_id", assignment_id) \
+                .eq("roll_no", page_idx + 1) \
+                .execute()
+
+            # अगर पहले से है और यूज़र ने रिप्लेस (Replace) की परमिशन नहीं दी:
+            if existing.data and not replace_existing:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"पेज {page_idx + 1} (Roll No: {page_idx + 1}) पहले से अपलोड है!"
+                )
+            
+            # अगर पहले से है और यूज़र ने रिप्लेस करने को कहा है:
+            elif existing.data and replace_existing:
+                supabase.table("test_evaluations") \
+                    .update(eval_row) \
+                    .eq("assignment_id", assignment_id) \
+                    .eq("roll_no", page_idx + 1) \
+                    .execute()
+                continue
+
+        # अगर नया रिकॉर्ड है तो लिस्ट में जोड़ें
+        all_evaluations.append(eval_row)
+    
 
         # 3. सीधे आपकी Supabase की 'test_evaluations' टेबल में सेव करना
         supabase.table("test_evaluations").insert(all_evaluations).execute()
