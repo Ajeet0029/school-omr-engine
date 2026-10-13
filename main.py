@@ -456,6 +456,9 @@ def generate_hybrid_omr_pdf(
 
     # ================================================================
     # LOCAL LAYOUT HELPERS
+    # IMPORTANT:
+    # These are inside this function only.
+    # No external helper/dependency is added.
     # ================================================================
 
     def measure_text(
@@ -544,10 +547,19 @@ def generate_hybrid_omr_pdf(
                 current = candidate
                 continue
 
+            # --------------------------------------------------------
+            # Current line is full.
+            # --------------------------------------------------------
+
             if current:
                 lines.append(
                     current
                 )
+
+            # --------------------------------------------------------
+            # If the new word itself fits, start new line.
+            # Otherwise split character-wise.
+            # --------------------------------------------------------
 
             if (
                 measure_text(
@@ -686,81 +698,220 @@ def generate_hybrid_omr_pdf(
     # ================================================================
 
     m_size = 14
-    c.setFillColor(colors.black)
 
-    c.rect(18, height - 18 - m_size, m_size, m_size, fill=1, stroke=0)
-    c.rect(width - 18 - m_size, height - 18 - m_size, m_size, m_size, fill=1, stroke=0)
-    c.rect(18, 18, m_size, m_size, fill=1, stroke=0)
-    c.rect(width - 18 - m_size, 18, m_size, m_size, fill=1, stroke=0)
+    c.setFillColor(
+        colors.black
+    )
+
+    c.rect(
+        18,
+        height - 18 - m_size,
+        m_size,
+        m_size,
+        fill=1,
+        stroke=0
+    )
+
+    c.rect(
+        width - 18 - m_size,
+        height - 18 - m_size,
+        m_size,
+        m_size,
+        fill=1,
+        stroke=0
+    )
+
+    c.rect(
+        18,
+        18,
+        m_size,
+        m_size,
+        fill=1,
+        stroke=0
+    )
+
+    c.rect(
+        width - 18 - m_size,
+        18,
+        m_size,
+        m_size,
+        fill=1,
+        stroke=0
+    )
 
     # ================================================================
     # BASIC DATA
     # ================================================================
 
-    school_name = str(payload.get("school_name", "SCHOOL ASSESSMENT TEST"))
-    class_name = str(payload.get("class_name", ""))
-    section = str(payload.get("section", ""))
-    subject = str(payload.get("subject", ""))
-    roll_no = str(payload.get("roll_no", "1"))
-    difficulty = str(payload.get("difficulty_level", payload.get("difficulty", "")))
-    chapter = str(payload.get("chapter", payload.get("chapter_name", "")))
-    skill = str(payload.get("skill_tested", payload.get("skill", "")))
-    assignment_id = str(payload.get("assignment_id", "T01"))
+    school_name = str(
+        payload.get(
+            "school_name",
+            "SCHOOL ASSESSMENT TEST"
+        )
+    )
+
+    class_name = str(
+        payload.get(
+            "class_name",
+            ""
+        )
+    )
+
+    section = str(
+        payload.get(
+            "section",
+            ""
+        )
+    )
+
+    subject = str(
+        payload.get(
+            "subject",
+            ""
+        )
+    )
+
+    difficulty = str(
+        payload.get(
+            "difficulty_level",
+            payload.get(
+                "difficulty",
+                ""
+            )
+        )
+    )
+
+    chapter = str(
+        payload.get(
+            "chapter",
+            payload.get(
+                "chapter_name",
+                ""
+            )
+        )
+    )
+
+    skill = str(
+        payload.get(
+            "skill_tested",
+            payload.get(
+                "skill",
+                ""
+            )
+        )
+    )
+
+    assignment_id = str(
+        payload.get(
+            "assignment_id",
+            "T01"
+        )
+    )
 
     # ================================================================
     # QUESTIONS INPUT
     # ================================================================
 
-    raw_questions = payload.get("questions", [])
+    raw_questions = payload.get(
+        "questions",
+        []
+    )
 
-    if isinstance(raw_questions, str):
+    if isinstance(
+        raw_questions,
+        str
+    ):
         try:
-            raw_questions = json.loads(raw_questions)
+            raw_questions = json.loads(
+                raw_questions
+            )
         except Exception:
             raw_questions = []
 
-    if not isinstance(raw_questions, list):
+    if not isinstance(
+        raw_questions,
+        list
+    ):
         raw_questions = []
 
     total_q = (
         len(raw_questions)
         if raw_questions
-        else int(payload.get("total_questions", 10) or 10)
+        else int(
+            payload.get(
+                "total_questions",
+                10
+            ) or 10
+        )
     )
 
     if total_q < 1:
         total_q = 1
+
+    # Layout is designed for maximum 40 questions.
     if total_q > 40:
         total_q = 40
 
     # ================================================================
-    # HEADER GEOMETRY & TYPOGRAPHY
+    # HEADER GEOMETRY
     # ================================================================
 
-    is_40_block = (total_q > 20)
+    is_40_block = (
+        total_q > 20
+    )
 
     if is_40_block:
-        header_school_y = height - 30
-        header_meta_y = height - 42
-        instruction_y = height - 54
-        divider_y = height - 64
-        strip_y = 138
 
-        school_font = 11.0
-        meta_font = 6.8
-        instruction_font = 6.0
+        header_school_y = (
+            height - 30
+        )
+
+        header_meta_y = (
+            height - 42
+        )
+
+        instruction_y = (
+            height - 54
+        )
+
+        divider_y = (
+            height - 66
+        )
+
+        strip_y = 136
+
+        school_font = 10.5
+        meta_font = 6.4
+        instruction_font = 5.9
+
     else:
-        header_school_y = height - 32
-        header_meta_y = height - 46
-        instruction_y = height - 60
-        divider_y = height - 70
+
+        header_school_y = (
+            height - 34
+        )
+
+        header_meta_y = (
+            height - 48
+        )
+
+        instruction_y = (
+            height - 62
+        )
+
+        divider_y = (
+            height - 72
+        )
+
         strip_y = 154
 
-        school_font = 13.0
-        meta_font = 7.8
-        instruction_font = 7.0
+        school_font = 12
+        meta_font = 7.2
+        instruction_font = 6.8
 
-    # 1. School Name (Top-Left)
+    # ================================================================
+    # SCHOOL NAME
+    # ================================================================
+
     draw_hindi_text(
         c,
         42,
@@ -770,124 +921,216 @@ def generate_hybrid_omr_pdf(
         bold=True
     )
 
-    # 2. Class / Section / Subject Meta
+    # ================================================================
+    # CLASS / SECTION / SUBJECT
+    # ================================================================
+
     header_meta = []
+
     if class_name:
-        header_meta.append(f"कक्षा: {class_name}")
+        header_meta.append(
+            f"Class: {class_name}"
+        )
+
     if section:
-        header_meta.append(f"वर्ग: {section}")
+        header_meta.append(
+            f"Section: {section}"
+        )
+
     if subject:
-        header_meta.append(f"विषय: {subject}")
+        header_meta.append(
+            f"Subject: {subject}"
+        )
 
     draw_hindi_text(
         c,
         42,
         header_meta_y,
-        "   |   ".join(header_meta) if header_meta else "सामान्य मूल्यांकन",
+        "  |  ".join(
+            header_meta
+        ),
         meta_font,
         bold=False
     )
 
-    # 3. Instruction
+    # ================================================================
+    # INSTRUCTION
+    # ================================================================
+
     draw_hindi_text(
         c,
         42,
         instruction_y,
-        "निर्देश: सभी प्रश्नों के उत्तर नीचे दी गई ओएमआर पट्टी में नीले/काले पेन से पूरा गहरा गोला भरकर दें।",
+        "निर्देश: सभी प्रश्नों के उत्तर नीचे दी गई ओएमआर पट्टी में नीले/काले पेन से गोला भरकर दें।",
         instruction_font,
         bold=False
     )
 
     # ================================================================
-    # STUDENT DETAILS BOX (TOP-RIGHT) WITH DYNAMIC ROLL NO
+    # STUDENT DETAILS BOX
     # ================================================================
 
     if is_40_block:
-        rx = width - 210
-        ry = height - 56
-        rw = 168
+
+        rx = width - 214
+        ry = height - 57
+        rw = 172
         rh = 34
-        label_font = 6.6
-        box_size = 9.5
-        box_gap = 2.5
-        box_x_offset = 52
-        c.setLineWidth(0.7)
+
+        label_font = 6.4
+
+        c.setLineWidth(
+            0.65
+        )
+
     else:
+
         rx = width - 220
         ry = height - 62
-        rw = 178
-        rh = 40
-        label_font = 7.4
-        box_size = 11.0
-        box_gap = 3.0
-        box_x_offset = 56
-        c.setLineWidth(0.8)
+        rw = 180
+        rh = 41
 
-    c.rect(rx, ry, rw, rh, fill=0, stroke=1)
+        label_font = 7.2
 
-    # Name Line
+        c.setLineWidth(
+            0.7
+        )
+
+    c.rect(
+        rx,
+        ry,
+        rw,
+        rh,
+        fill=0,
+        stroke=1
+    )
+
     draw_hindi_text(
         c,
-        rx + 6,
-        ry + (22 if is_40_block else 26),
-        "नाम:",
+        rx + 7,
+        ry + (
+            22
+            if is_40_block
+            else 27
+        ),
+        "NAME:",
         label_font,
         bold=True
     )
+
     c.line(
-        rx + 32,
-        ry + (21 if is_40_block else 25),
-        rx + rw - 6,
-        ry + (21 if is_40_block else 25)
+        rx + 42,
+        ry + (
+            21
+            if is_40_block
+            else 26
+        ),
+        rx + rw - 7,
+        ry + (
+            21
+            if is_40_block
+            else 26
+        )
     )
 
-    # Roll No Label & Boxes
     draw_hindi_text(
         c,
-        rx + 6,
-        ry + (8 if is_40_block else 10),
-        "रोल नं:",
+        rx + 7,
+        ry + (
+            9
+            if is_40_block
+            else 11
+        ),
+        "ROLL NO:",
         label_font,
         bold=True
     )
 
-    box_start_x = rx + box_x_offset
-    box_y = ry + (5 if is_40_block else 6)
-    clean_roll = str(roll_no).strip().zfill(4)[-4:]
+    box_start_x = (
+        rx
+        + (
+            56
+            if is_40_block
+            else 58
+        )
+    )
+
+    box_y = (
+        ry
+        + (
+            5
+            if is_40_block
+            else 6
+        )
+    )
+
+    box_size = (
+        9.2
+        if is_40_block
+        else 11
+    )
+
+    box_gap = (
+        2.5
+        if is_40_block
+        else 3
+    )
 
     for b in range(4):
-        bx_curr = box_start_x + (b * (box_size + box_gap))
+
         c.rect(
-            bx_curr,
+            box_start_x
+            + (
+                b
+                * (
+                    box_size
+                    + box_gap
+                )
+            ),
             box_y,
             box_size,
             box_size,
             fill=0,
             stroke=1
         )
-        draw_hindi_text(
-            c,
-            bx_curr + (2.5 if is_40_block else 3.0),
-            box_y + (1.5 if is_40_block else 2.0),
-            clean_roll[b],
-            label_font,
-            bold=True
-        )
 
     # ================================================================
     # HEADER DIVIDER
     # ================================================================
 
-    c.setLineWidth(0.8)
-    c.line(40, divider_y, width - 40, divider_y)
+    c.setLineWidth(
+        0.8
+    )
+
+    c.line(
+        40,
+        divider_y,
+        width - 40,
+        divider_y
+    )
 
     # ================================================================
-    # QUESTION AREA GEOMETRY
+    # QUESTION AREA
     # ================================================================
 
-    question_top = height - (74 if is_40_block else 80)
-    question_bottom = strip_y + 4
-    available_height = question_top - question_bottom
+    question_top = (
+        height
+        - (
+            78
+            if is_40_block
+            else 84
+        )
+    )
+
+    question_bottom = (
+        strip_y
+        + 5
+    )
+
+    available_height = (
+        question_top
+        - question_bottom
+    )
 
     # ================================================================
     # BLOCK A: 10 / 20 QUESTIONS
@@ -895,53 +1138,145 @@ def generate_hybrid_omr_pdf(
 
     if total_q <= 20:
 
-        rows = (total_q + 1) // 2
-        row_height = available_height / rows
+        rows = (
+            total_q + 1
+        ) // 2
+
+        row_height = (
+            available_height
+            / rows
+        )
 
         col1_x = 42
-        col2_x = (width / 2.0) + 7
-        col_width = (width / 2.0) - 49
+        col2_x = (
+            width / 2.0
+            + 7
+        )
+
+        col_width = (
+            width / 2.0
+            - 49
+        )
 
         option_gap = 8
-        option_width = (col_width - option_gap) / 2.0
 
-        question_font = 8.2 if total_q <= 10 else 6.6
-        option_font = 6.8 if total_q <= 10 else 5.3
+        option_width = (
+            col_width
+            - option_gap
+        ) / 2.0
 
-        for idx in range(total_q):
+        # Initial font sizes
+        question_font = (
+            8.0
+            if total_q <= 10
+            else 6.5
+        )
 
-            if idx < rows:
+        option_font = (
+            6.7
+            if total_q <= 10
+            else 5.2
+        )
+
+        for idx in range(
+            total_q
+        ):
+
+            if (
+                idx
+                < rows
+            ):
                 x = col1_x
                 row = idx
             else:
                 x = col2_x
-                row = idx - rows
+                row = (
+                    idx - rows
+                )
 
-            top_y = question_top - (row * row_height)
+            top_y = (
+                question_top
+                - (
+                    row
+                    * row_height
+                )
+            )
 
             q_data = (
                 raw_questions[idx]
-                if (idx < len(raw_questions) and isinstance(raw_questions[idx], dict))
+                if (
+                    idx
+                    < len(
+                        raw_questions
+                    )
+                    and
+                    isinstance(
+                        raw_questions[idx],
+                        dict
+                    )
+                )
                 else {}
             )
 
             q_text = str(
-                q_data.get("question_text")
-                or q_data.get("question")
-                or f"प्रश्न संख्या {idx + 1}"
+                q_data.get(
+                    "question_text"
+                )
+                or q_data.get(
+                    "question"
+                )
+                or (
+                    f"प्रश्न संख्या "
+                    f"{idx + 1}"
+                )
             )
 
             options = [
-                str(q_data.get("opt_a") or q_data.get("option_a") or "विकल्प A"),
-                str(q_data.get("opt_b") or q_data.get("option_b") or "विकल्प B"),
-                str(q_data.get("opt_c") or q_data.get("option_c") or "विकल्प C"),
-                str(q_data.get("opt_d") or q_data.get("option_d") or "विकल्प D")
+                str(
+                    q_data.get(
+                        "opt_a"
+                    )
+                    or q_data.get(
+                        "option_a"
+                    )
+                    or "विकल्प A"
+                ),
+                str(
+                    q_data.get(
+                        "opt_b"
+                    )
+                    or q_data.get(
+                        "option_b"
+                    )
+                    or "विकल्प B"
+                ),
+                str(
+                    q_data.get(
+                        "opt_c"
+                    )
+                    or q_data.get(
+                        "option_c"
+                    )
+                    or "विकल्प C"
+                ),
+                str(
+                    q_data.get(
+                        "opt_d"
+                    )
+                    or q_data.get(
+                        "option_d"
+                    )
+                    or "विकल्प D"
+                )
             ]
 
             q_font = question_font
             o_font = option_font
 
+            # --------------------------------------------------------
             # Auto-fit
+            # --------------------------------------------------------
+
             for _ in range(25):
 
                 q_lines = wrap_text(
@@ -961,23 +1296,75 @@ def generate_hybrid_omr_pdf(
                     for j in range(4)
                 ]
 
-                q_lh = q_font * 1.10
-                o_lh = o_font * 1.08
+                q_lh = (
+                    q_font
+                    * 1.10
+                )
 
-                q_height = len(q_lines) * q_lh
-                first_option_height = max(len(option_lines[0]), len(option_lines[1])) * o_lh
-                second_option_height = max(len(option_lines[2]), len(option_lines[3])) * o_lh
+                o_lh = (
+                    o_font
+                    * 1.08
+                )
 
-                required_height = q_height + first_option_height + second_option_height + 4
+                q_height = (
+                    len(q_lines)
+                    * q_lh
+                )
 
-                if required_height <= row_height - 3:
+                first_option_height = (
+                    max(
+                        len(
+                            option_lines[0]
+                        ),
+                        len(
+                            option_lines[1]
+                        )
+                    )
+                    * o_lh
+                )
+
+                second_option_height = (
+                    max(
+                        len(
+                            option_lines[2]
+                        ),
+                        len(
+                            option_lines[3]
+                        )
+                    )
+                    * o_lh
+                )
+
+                required_height = (
+                    q_height
+                    + first_option_height
+                    + second_option_height
+                    + 4
+                )
+
+                if (
+                    required_height
+                    <= row_height - 3
+                ):
                     break
 
-                q_font = max(4.8, q_font - 0.15)
-                o_font = max(4.4, o_font - 0.12)
+                q_font = max(
+                    4.8,
+                    q_font - 0.15
+                )
 
-            # Draw Question Number & Text
-            y = top_y - 2
+                o_font = max(
+                    4.4,
+                    o_font - 0.12
+                )
+
+            # --------------------------------------------------------
+            # QUESTION NUMBER
+            # --------------------------------------------------------
+
+            y = (
+                top_y - 2
+            )
 
             draw_hindi_text(
                 c,
@@ -988,84 +1375,231 @@ def generate_hybrid_omr_pdf(
                 bold=True
             )
 
-            for line_index, line in enumerate(q_lines):
+            # --------------------------------------------------------
+            # QUESTION TEXT
+            # --------------------------------------------------------
+
+            for line_index, line in enumerate(
+                q_lines
+            ):
+
                 draw_hindi_text(
                     c,
                     x + 13,
-                    y - (line_index * q_lh),
+                    y - (
+                        line_index
+                        * q_lh
+                    ),
                     line,
                     q_font,
                     bold=True
                 )
 
-            y -= (len(q_lines) * q_lh + 1)
+            y -= (
+                len(q_lines)
+                * q_lh
+                + 1
+            )
 
-            # Draw Options
+            # --------------------------------------------------------
+            # A / B
+            # --------------------------------------------------------
+
             a_x = x
-            b_x = x + option_width + option_gap
 
-            draw_option("A", options[0], a_x, y, option_width, o_font, o_lh)
-            draw_option("B", options[1], b_x, y, option_width, o_font, o_lh)
+            b_x = (
+                x
+                + option_width
+                + option_gap
+            )
 
-            first_option_lines = max(len(option_lines[0]), len(option_lines[1]))
-            y2 = y - (first_option_lines * o_lh) - 1
+            draw_option(
+                "A",
+                options[0],
+                a_x,
+                y,
+                option_width,
+                o_font,
+                o_lh
+            )
 
-            draw_option("C", options[2], a_x, y2, option_width, o_font, o_lh)
-            draw_option("D", options[3], b_x, y2, option_width, o_font, o_lh)
+            draw_option(
+                "B",
+                options[1],
+                b_x,
+                y,
+                option_width,
+                o_font,
+                o_lh
+            )
+
+            first_option_lines = max(
+                len(
+                    option_lines[0]
+                ),
+                len(
+                    option_lines[1]
+                )
+            )
+
+            y2 = (
+                y
+                - (
+                    first_option_lines
+                    * o_lh
+                )
+                - 1
+            )
+
+            # --------------------------------------------------------
+            # C / D
+            # --------------------------------------------------------
+
+            draw_option(
+                "C",
+                options[2],
+                a_x,
+                y2,
+                option_width,
+                o_font,
+                o_lh
+            )
+
+            draw_option(
+                "D",
+                options[3],
+                b_x,
+                y2,
+                option_width,
+                o_font,
+                o_lh
+            )
 
     # ================================================================
-    # BLOCK B: 21–40 QUESTIONS (COMPACT SINGLE PAGE)
+    # BLOCK B: 21–40 QUESTIONS
+    # DEDICATED SINGLE-PAGE A4
     # ================================================================
 
     else:
 
         rows = 20
-        row_height = available_height / rows
+
+        row_height = (
+            available_height
+            / rows
+        )
 
         col1_x = 40
         col2_x = 302
+
         col_width = 248
 
         option_gap = 7
-        option_width = (col_width - option_gap) / 2.0
+
+        option_width = (
+            col_width
+            - option_gap
+        ) / 2.0
 
         base_question_font = 5.35
         base_option_font = 4.45
 
-        for idx in range(total_q):
+        for idx in range(
+            total_q
+        ):
 
             if idx < 20:
                 x = col1_x
                 row = idx
             else:
                 x = col2_x
-                row = idx - 20
+                row = (
+                    idx - 20
+                )
 
-            top_y = question_top - (row * row_height)
+            top_y = (
+                question_top
+                - (
+                    row
+                    * row_height
+                )
+            )
 
             q_data = (
                 raw_questions[idx]
-                if (idx < len(raw_questions) and isinstance(raw_questions[idx], dict))
+                if (
+                    idx
+                    < len(
+                        raw_questions
+                    )
+                    and
+                    isinstance(
+                        raw_questions[idx],
+                        dict
+                    )
+                )
                 else {}
             )
 
             q_text = str(
-                q_data.get("question_text")
-                or q_data.get("question")
-                or f"प्रश्न संख्या {idx + 1}"
+                q_data.get(
+                    "question_text"
+                )
+                or q_data.get(
+                    "question"
+                )
+                or (
+                    f"प्रश्न संख्या "
+                    f"{idx + 1}"
+                )
             )
 
             options = [
-                str(q_data.get("opt_a") or q_data.get("option_a") or "विकल्प A"),
-                str(q_data.get("opt_b") or q_data.get("option_b") or "विकल्प B"),
-                str(q_data.get("opt_c") or q_data.get("option_c") or "विकल्प C"),
-                str(q_data.get("opt_d") or q_data.get("option_d") or "विकल्प D")
+                str(
+                    q_data.get(
+                        "opt_a"
+                    )
+                    or q_data.get(
+                        "option_a"
+                    )
+                    or "विकल्प A"
+                ),
+                str(
+                    q_data.get(
+                        "opt_b"
+                    )
+                    or q_data.get(
+                        "option_b"
+                    )
+                    or "विकल्प B"
+                ),
+                str(
+                    q_data.get(
+                        "opt_c"
+                    )
+                    or q_data.get(
+                        "option_c"
+                    )
+                    or "विकल्प C"
+                ),
+                str(
+                    q_data.get(
+                        "opt_d"
+                    )
+                    or q_data.get(
+                        "option_d"
+                    )
+                    or "विकल्प D"
+                )
             ]
 
             q_font = base_question_font
             o_font = base_option_font
 
-            # Auto-fit
+            # --------------------------------------------------------
+            # AUTO-FIT FOR 40-Q PAGE
+            # --------------------------------------------------------
+
             for _ in range(35):
 
                 q_lines = wrap_text(
@@ -1085,23 +1619,75 @@ def generate_hybrid_omr_pdf(
                     for j in range(4)
                 ]
 
-                q_lh = q_font * 1.05
-                o_lh = o_font * 1.05
+                q_lh = (
+                    q_font
+                    * 1.05
+                )
 
-                q_height = len(q_lines) * q_lh
-                ab_height = max(len(option_lines[0]), len(option_lines[1])) * o_lh
-                cd_height = max(len(option_lines[2]), len(option_lines[3])) * o_lh
+                o_lh = (
+                    o_font
+                    * 1.05
+                )
 
-                required_height = q_height + ab_height + cd_height + 4
+                q_height = (
+                    len(q_lines)
+                    * q_lh
+                )
 
-                if required_height <= row_height - 2:
+                ab_height = (
+                    max(
+                        len(
+                            option_lines[0]
+                        ),
+                        len(
+                            option_lines[1]
+                        )
+                    )
+                    * o_lh
+                )
+
+                cd_height = (
+                    max(
+                        len(
+                            option_lines[2]
+                        ),
+                        len(
+                            option_lines[3]
+                        )
+                    )
+                    * o_lh
+                )
+
+                required_height = (
+                    q_height
+                    + ab_height
+                    + cd_height
+                    + 4
+                )
+
+                if (
+                    required_height
+                    <= row_height - 2
+                ):
                     break
 
-                q_font = max(3.75, q_font - 0.12)
-                o_font = max(3.45, o_font - 0.10)
+                q_font = max(
+                    3.75,
+                    q_font - 0.12
+                )
 
-            # Draw Question
-            y = top_y - 1
+                o_font = max(
+                    3.45,
+                    o_font - 0.10
+                )
+
+            # --------------------------------------------------------
+            # QUESTION NUMBER
+            # --------------------------------------------------------
+
+            y = (
+                top_y - 1
+            )
 
             draw_hindi_text(
                 c,
@@ -1112,52 +1698,138 @@ def generate_hybrid_omr_pdf(
                 bold=True
             )
 
-            for line_index, line in enumerate(q_lines):
+            # --------------------------------------------------------
+            # QUESTION TEXT
+            # --------------------------------------------------------
+
+            for line_index, line in enumerate(
+                q_lines
+            ):
+
                 draw_hindi_text(
                     c,
                     x + 11,
-                    y - (line_index * q_lh),
+                    y - (
+                        line_index
+                        * q_lh
+                    ),
                     line,
                     q_font,
                     bold=True
                 )
 
-            y -= (len(q_lines) * q_lh + 1.2)
+            y -= (
+                len(q_lines)
+                * q_lh
+                + 1.2
+            )
 
-            # Draw Options
+            # --------------------------------------------------------
+            # A / B
+            # --------------------------------------------------------
+
             a_x = x
-            b_x = x + option_width + option_gap
 
-            draw_option("A", options[0], a_x, y, option_width, o_font, o_lh)
-            draw_option("B", options[1], b_x, y, option_width, o_font, o_lh)
+            b_x = (
+                x
+                + option_width
+                + option_gap
+            )
 
-            ab_lines = max(len(option_lines[0]), len(option_lines[1]))
-            y2 = y - (ab_lines * o_lh) - 1
+            draw_option(
+                "A",
+                options[0],
+                a_x,
+                y,
+                option_width,
+                o_font,
+                o_lh
+            )
 
-            draw_option("C", options[2], a_x, y2, option_width, o_font, o_lh)
-            draw_option("D", options[3], b_x, y2, option_width, o_font, o_lh)
+            draw_option(
+                "B",
+                options[1],
+                b_x,
+                y,
+                option_width,
+                o_font,
+                o_lh
+            )
+
+            ab_lines = max(
+                len(
+                    option_lines[0]
+                ),
+                len(
+                    option_lines[1]
+                )
+            )
+
+            y2 = (
+                y
+                - (
+                    ab_lines
+                    * o_lh
+                )
+                - 1
+            )
+
+            # --------------------------------------------------------
+            # C / D
+            # --------------------------------------------------------
+
+            draw_option(
+                "C",
+                options[2],
+                a_x,
+                y2,
+                option_width,
+                o_font,
+                o_lh
+            )
+
+            draw_option(
+                "D",
+                options[3],
+                b_x,
+                y2,
+                option_width,
+                o_font,
+                o_lh
+            )
 
     # ================================================================
     # BOTTOM OMR SECTION
     # ================================================================
 
-    c.setLineWidth(1)
-    c.line(40, strip_y, width - 40, strip_y)
+    c.setLineWidth(
+        1
+    )
+
+    c.line(
+        40,
+        strip_y,
+        width - 40,
+        strip_y
+    )
 
     # ================================================================
-    # TEST DETAILS (BOTTOM LEFT)
+    # TEST DETAILS
     # ================================================================
 
     details_x = 42
 
     if is_40_block:
-        details_title_size = 6.6
-        details_font_size = 5.0
-        details_gap = 6.2
+
+        details_title_size = 6.4
+        details_font_size = 4.9
+        details_gap = 6.0
+
     else:
-        details_title_size = 7.5
-        details_font_size = 5.8
-        details_gap = 7.2
+
+        details_title_size = 7.3
+        details_font_size = 5.7
+        details_gap = 7.0
 
     draw_hindi_text(
         c,
@@ -1169,30 +1841,72 @@ def generate_hybrid_omr_pdf(
     )
 
     detail_values = [
-        ("Class/Sec", f"{class_name} {section}".strip()),
-        ("Subject", subject),
-        ("Date", datetime.now().strftime("%d-%b-%Y")),
-        ("Difficulty", difficulty or "-"),
-        ("Chapter", chapter or "-"),
-        ("Skill", skill or "-"),
-        ("ID", assignment_id)
+        (
+            "Class/Sec",
+            " ".join(
+                [
+                    v
+                    for v in (
+                        class_name,
+                        section
+                    )
+                    if v
+                ]
+            )
+        ),
+        (
+            "Subject",
+            subject
+        ),
+        (
+            "Date",
+            datetime.now().strftime(
+                "%d-%b-%Y"
+            )
+        ),
+        (
+            "Difficulty",
+            difficulty or "-"
+        ),
+        (
+            "Chapter",
+            chapter or "-"
+        ),
+        (
+            "Skill",
+            skill or "-"
+        ),
+        (
+            "ID",
+            assignment_id
+        )
     ]
 
-    details_y = strip_y - 21
+    details_y = (
+        strip_y - 21
+    )
 
     for label, value in detail_values:
+
+        text_line = (
+            f"{label}: "
+            f"{value}"
+        )
+
         draw_hindi_text(
             c,
             details_x,
             details_y,
-            f"{label}: {value}",
+            text_line,
             details_font_size,
             bold=False
         )
+
         details_y -= details_gap
 
     # ================================================================
     # QR CODE
+    # KEEP EXISTING QR DATA UNCHANGED
     # ================================================================
 
     qr = qrcode.QRCode(
@@ -1200,9 +1914,18 @@ def generate_hybrid_omr_pdf(
         border=0
     )
 
-    qr_data = f"ID:{assignment_id}|CLS:{class_name}|ROL:{roll_no}"
-    qr.add_data(qr_data)
-    qr.make(fit=True)
+    qr_data = (
+        f"ID:{payload.get('assignment_id')}"
+        f"|CLS:{payload.get('class_name')}"
+    )
+
+    qr.add_data(
+        qr_data
+    )
+
+    qr.make(
+        fit=True
+    )
 
     qr_img = (
         qr.make_image(
@@ -1225,19 +1948,30 @@ def generate_hybrid_omr_pdf(
     # ================================================================
 
     if is_40_block:
+
         roll_x = 105
-        roll_title_y = strip_y - 11
-        roll_start_y = strip_y - 25
+        roll_title_y = (
+            strip_y - 11
+        )
+        roll_start_y = (
+            strip_y - 25
+        )
         roll_gap_y = 8.0
-        roll_radius = 3.2
-        roll_font = 4.4
+        roll_radius = 3.0
+        roll_font = 4.2
+
     else:
-        roll_x = 138
-        roll_title_y = strip_y - 12
-        roll_start_y = strip_y - 27
+
+        roll_x = 140
+        roll_title_y = (
+            strip_y - 12
+        )
+        roll_start_y = (
+            strip_y - 27
+        )
         roll_gap_y = 8.0
-        roll_radius = 3.3
-        roll_font = 4.6
+        roll_radius = 3.0
+        roll_font = 4.5
 
     draw_hindi_text(
         c,
@@ -1248,13 +1982,34 @@ def generate_hybrid_omr_pdf(
         bold=True
     )
 
-    # डार्क बबल्स
-    c.setLineWidth(1.0)
     for col_r in range(2):
-        bx = roll_x + 7 + (col_r * 18)
+
+        bx = (
+            roll_x
+            + 7
+            + (
+                col_r * 18
+            )
+        )
+
         for num in range(10):
-            by = roll_start_y - (num * roll_gap_y)
-            c.circle(bx, by, roll_radius, stroke=1, fill=0)
+
+            by = (
+                roll_start_y
+                - (
+                    num
+                    * roll_gap_y
+                )
+            )
+
+            c.circle(
+                bx,
+                by,
+                roll_radius,
+                stroke=1,
+                fill=0
+            )
+
             draw_hindi_text(
                 c,
                 bx - 1.5,
@@ -1265,103 +2020,163 @@ def generate_hybrid_omr_pdf(
             )
 
     # ================================================================
-    # ANSWER STRIP (CRISP & DARK SCANNER-FRIENDLY BUBBLES)
+    # ANSWER STRIP
     # ================================================================
 
-    ans_x = 196 if is_40_block else 216
-    answer_title_size = 6.6 if is_40_block else 7.4
+    ans_x = (
+        198
+        if is_40_block
+        else 220
+    )
+
+    answer_title_size = (
+        6.4
+        if is_40_block
+        else 7.3
+    )
 
     draw_hindi_text(
         c,
         ans_x,
         strip_y - 11,
-        "उत्तर तालिका (Mark One Option Only)",
+        "ANSWER STRIP (Mark One Option Only)",
         answer_title_size,
         bold=True
     )
 
     if total_q <= 10:
+
         answer_columns = 2
-    else:
+
+    elif total_q <= 20:
+
         answer_columns = 4
 
-    q_per_answer_column = (total_q + answer_columns - 1) // answer_columns
-    answer_col_gap = 76 if is_40_block else 74
+    else:
 
-    for q_i in range(total_q):
+        answer_columns = 4
 
-        col_index = q_i // q_per_answer_column
-        row_index = q_i % q_per_answer_column
+    q_per_answer_column = (
+        total_q
+        + answer_columns
+        - 1
+    ) // answer_columns
 
-        q_x = ans_x + (col_index * answer_col_gap)
-        q_y = strip_y - (25 if is_40_block else 27) - (row_index * 10)
+    answer_col_gap = (
+        76
+        if is_40_block
+        else 74
+    )
 
-        # प्रश्न संख्या (Q01, Q02...)
+    for q_i in range(
+        total_q
+    ):
+
+        col_index = (
+            q_i
+            // q_per_answer_column
+        )
+
+        row_index = (
+            q_i
+            % q_per_answer_column
+        )
+
+        q_x = (
+            ans_x
+            + (
+                col_index
+                * answer_col_gap
+            )
+        )
+
+        q_y = (
+            strip_y
+            - (
+                25
+                if is_40_block
+                else 27
+            )
+            - (
+                row_index
+                * 10
+            )
+        )
+
         draw_hindi_text(
             c,
             q_x,
             q_y - 2,
             f"Q{q_i + 1:02d}",
-            5.6 if is_40_block else 6.2,
+            5.4 if is_40_block else 6.0,
             bold=True
         )
 
-        # OMR सर्कल्स (Dark 1.0pt outline & Bold Labels)
-        c.setLineWidth(1.0)
-        c.setStrokeColor(colors.black)
-
-        for o_i, o_label in enumerate(["A", "B", "C", "D"]):
+        for o_i, o_label in enumerate(
+            ["A", "B", "C", "D"]
+        ):
 
             if is_40_block:
-                bx = q_x + 18 + (o_i * 10.4)
-                bubble_radius = 3.1
-                label_size = 4.2
-                label_offset = 1.4
+
+                bx = (
+                    q_x
+                    + 19
+                    + (
+                        o_i
+                        * 10.5
+                    )
+                )
+
+                bubble_radius = 3.0
+                label_size = 4.0
+                label_offset = 1.35
+
             else:
-                bx = q_x + 20 + (o_i * 11.2)
-                bubble_radius = 3.3
-                label_size = 4.6
-                label_offset = 1.5
 
-            c.circle(bx, q_y, bubble_radius, stroke=1, fill=0)
+                bx = (
+                    q_x
+                    + 20
+                    + (
+                        o_i
+                        * 11.2
+                    )
+                )
 
-            # बबल के अंदर अक्षर
+                bubble_radius = 3.15
+                label_size = 4.4
+                label_offset = 1.45
+
+            c.circle(
+                bx,
+                q_y,
+                bubble_radius,
+                stroke=1,
+                fill=0
+            )
+
             draw_hindi_text(
                 c,
                 bx - 1.5,
                 q_y - label_offset,
                 o_label,
                 label_size,
-                bold=True
+                bold=False
             )
-
-    # ================================================================
-    # BOTTOM FOOTER BAR (PRODUCTION METADATA)
-    # ================================================================
-
-    c.setLineWidth(0.5)
-    c.setStrokeColor(colors.HexColor("#CBD5E1"))
-    c.line(40, 14, width - 40, 14)
-
-    footer_text = f"Roll No: {clean_roll} | Total Questions: {total_q} | Sheet ID: {assignment_id}"
-    draw_hindi_text(
-        c,
-        42,
-        6,
-        footer_text,
-        5.2 if is_40_block else 5.8,
-        bold=False
-    )
 
     # ================================================================
     # FINISH PDF
     # ================================================================
 
     c.showPage()
+
     c.save()
+
     buffer.seek(0)
 
     return buffer.getvalue()
+
+
+
 
 
 
