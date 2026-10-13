@@ -2610,10 +2610,9 @@ async def generate_omr_pdf(
 async def scan_omr_endpoint(request: Request):
     try:
         data = await request.json()
-        upload_session_id = payload.get("upload_session_id") or str(uuid.uuid4())
-
+        
         payload = data.get("data", data) if isinstance(data, dict) else {}
-
+        upload_session_id = payload.get("upload_session_id") or str(uuid.uuid4())
         # FlutterFlow से आने वाला image_url
         image_url = payload.get("image_url")
         if not image_url:
