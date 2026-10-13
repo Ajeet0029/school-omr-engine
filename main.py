@@ -447,7 +447,7 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
     Uses the same surrounding globals as the existing application:
     io, json, qrcode, canvas, A4, colors, Image, ImageDraw, ImageFont,
     datetime, FONT_BOLD_PATH, FONT_REG_PATH, FONT_RENDER_SCALE,
-    and draw_hindi_text.
+    and draw_hindi_text, pdfmetrics.
     """
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
@@ -456,8 +456,39 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
     # ------------------------------------------------------------------
     # LOCAL LAYOUT HELPERS (kept inside this function)
     # ------------------------------------------------------------------
-    def measure_text(text, font_size, bold=False):
+    def _is_devanagari_char(ch):
+        code = ord(ch)
+        return (0x0900 <= code <= 0x097F) or (0xA8E0 <= code <= 0xA8FF)
+
+    def _split_script_runs(text):
+        """Split mixed text into Devanagari and Latin/ASCII runs."""
         text = str(text or "")
+        if not text:
+            return []
+        runs = []
+        current = text[0]
+        current_is_hindi = _is_devanagari_char(text[0])
+        for ch in text[1:]:
+            is_hindi = _is_devanagari_char(ch)
+            if is_hindi == current_is_hindi:
+                current += ch
+            else:
+                runs.append((current, current_is_hindi))
+                current = ch
+                current_is_hindi = is_hindi
+        runs.append((current, current_is_hindi))
+        return runs
+
+    _hindi_measure_cache = {}
+
+    def _measure_hindi_run(text, font_size, bold=False):
+        """Measure Hindi with the existing Noto/RAQM font; cache only measurements."""
+        text = str(text or "")
+        if not text:
+            return 0.0
+        cache_key = (text, float(font_size), bool(bold))
+        if cache_key in _hindi_measure_cache:
+            return _hindi_measure_cache[cache_key]
         font_path = FONT_BOLD_PATH if bold else FONT_REG_PATH
         font_px = max(1, int(round(font_size * FONT_RENDER_SCALE)))
         font = ImageFont.truetype(font_path, font_px)
@@ -467,7 +498,52 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
             (0, 0), text, font=font, anchor="ls",
             direction="ltr", language="hi"
         )
-        return (bbox[2] - bbox[0]) / FONT_RENDER_SCALE
+        measured = max(0.0, (bbox[2] - bbox[0]) / FONT_RENDER_SCALE)
+        _hindi_measure_cache[cache_key] = measured
+        return measured
+
+    def _has_latin_letters(text):
+        return any(("A" <= ch <= "Z") or ("a" <= ch <= "z") for ch in str(text or ""))
+
+    def measure_text(text, font_size, bold=False):
+        """Measure mixed text by script; pure Hindi keeps the original measurement path."""
+        text = str(text or "")
+        if not _has_latin_letters(text):
+            return _measure_hindi_run(text, font_size, bold)
+        total_width = 0.0
+        latin_font = "Helvetica-Bold" if bold else "Helvetica"
+        for run, is_hindi in _split_script_runs(text):
+            if is_hindi:
+                total_width += _measure_hindi_run(run, font_size, bold)
+            else:
+                total_width += pdfmetrics.stringWidth(run, latin_font, font_size)
+        return total_width
+
+    def draw_text_auto(c, x, y, text, font_size, bold=False):
+        """Use unchanged Hindi rendering for Hindi-only text and Helvetica for Latin text."""
+        if text is None:
+            return
+        text = str(text)
+        # CRITICAL: pure Hindi strings go through the exact original renderer in
+        # one call, preserving its shaping, matras, conjuncts, spacing and baseline.
+        if not _has_latin_letters(text):
+            draw_hindi_text(c, x, y, text, font_size, bold=bold)
+            return _measure_hindi_run(text, font_size, bold)
+
+        cursor_x = x
+        latin_font = "Helvetica-Bold" if bold else "Helvetica"
+        for run, is_hindi in _split_script_runs(text):
+            if not run:
+                continue
+            if is_hindi:
+                # IMPORTANT: use the user's existing Pillow + RAQM + Noto renderer.
+                draw_hindi_text(c, cursor_x, y, run, font_size, bold=bold)
+                cursor_x += _measure_hindi_run(run, font_size, bold)
+            else:
+                c.setFont(latin_font, font_size)
+                c.drawString(cursor_x, y, run)
+                cursor_x += pdfmetrics.stringWidth(run, latin_font, font_size)
+        return cursor_x - x
 
     def wrap_text(text, max_width, font_size, bold=False):
         text = str(text or "")
@@ -513,19 +589,19 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
         if line_height is None:
             line_height = font_size * 1.08
         for line_index, line in enumerate(lines):
-            draw_hindi_text(
+            draw_text_auto(
                 c, x, y - line_index * line_height,
                 line, font_size, bold=bold
             )
         return len(lines)
 
     def draw_option(label, text, x, y, max_width, font_size, line_height):
-        draw_hindi_text(c, x, y, f"({label})", font_size, bold=False)
-        wrapped = wrap_text(text, max_width - 13, font_size, False)
+        draw_text_auto(c, x, y, f"({label})", font_size, bold=False)
+        wrapped = wrap_text(text, max_width - 13, font_size, True)
         for line_index, line in enumerate(wrapped):
-            draw_hindi_text(
+            draw_text_auto(
                 c, x + 12, y - line_index * line_height,
-                line, font_size, bold=False
+                line, font_size, bold=True
             )
         return len(wrapped)
 
@@ -732,7 +808,7 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
     # COMPACT HEADER (only header geometry/content layout changed)
     # Left: school name, then class/section/subject.
     # Right: student name line, then roll-number boxes.
-    # All header text uses the same draw_hindi_text() renderer as the body.
+    # All header text uses the same draw_text_auto() renderer as the body.
     # ------------------------------------------------------------------
     is_40_block = total_q > 20
     strip_y = 142 if is_40_block else 205
@@ -755,7 +831,7 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
         school_name_lines = wrap_text(school_name, left_max_width, school_font, True)
         school_name = school_name_lines[0]
 
-    draw_hindi_text(c, left_x, header_school_y, school_name, school_font, bold=True)
+    draw_text_auto(c, left_x, header_school_y, school_name, school_font, bold=True)
 
     header_meta = []
     if class_name:
@@ -768,22 +844,22 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
     meta_font = 7.2 if not is_40_block else 6.4
     while meta_font > 5.0 and measure_text(meta_text, meta_font, False) > left_max_width:
         meta_font = max(5.0, meta_font - 0.2)
-    draw_hindi_text(c, left_x, header_meta_y, meta_text, meta_font, bold=False)
+    draw_text_auto(c, left_x, header_meta_y, meta_text, meta_font, bold=False)
 
     # Right-side student name, above the roll-number boxes.
     right_width = width - 40 - right_x
     label_font = 7.2 if not is_40_block else 6.4
-    draw_hindi_text(c, right_x, header_school_y, "नाम:", label_font, bold=True)
+    draw_text_auto(c, right_x, header_school_y, "नाम:", label_font, bold=True)
     name_line_start = right_x + 25
     c.setLineWidth(0.65 if is_40_block else 0.7)
     c.line(name_line_start, header_school_y - 1, width - 40, header_school_y - 1)
 
     roll_label_y = height - 47
-    draw_hindi_text(c, right_x, roll_label_y, "रोल नंबर:", label_font, bold=True)
+    draw_text_auto(c, right_x, roll_label_y, "रोल नंबर:", label_font, bold=True)
     box_size = 8.0 if is_40_block else 9.0
     box_gap = 2.0 if is_40_block else 2.5
     box_start_x = right_x + 48
-    box_y = height - 62
+    box_y = roll_label_y + (label_font * 0.35) - (box_size / 2.0)
     max_box_right = width - 40
     for b in range(4):
         bx = box_start_x + b * (box_size + box_gap)
@@ -796,7 +872,7 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
     instruction_max_width = width - 84
     while instruction_font > 5.0 and measure_text(instruction, instruction_font, False) > instruction_max_width:
         instruction_font = max(5.0, instruction_font - 0.2)
-    draw_hindi_text(c, left_x, instruction_y, instruction, instruction_font, bold=False)
+    draw_text_auto(c, left_x, instruction_y, instruction, instruction_font, bold=False)
 
     # ------------------------------------------------------------------
     # HEADER DIVIDER (position preserved)
@@ -834,7 +910,7 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
             for _ in range(25):
                 q_lines = wrap_text(q_text, col_width - 15, q_font, True)
                 option_lines = [
-                    wrap_text(options[j], option_width - 14, o_font, False)
+                    wrap_text(options[j], option_width - 14, o_font, True)
                     for j in range(4)
                 ]
                 q_lh = q_font * 1.10
@@ -849,9 +925,9 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
                 o_font = max(4.4, o_font - 0.12)
 
             y = top_y - 2
-            draw_hindi_text(c, x, y, f"{idx + 1}.", q_font, bold=True)
+            draw_text_auto(c, x, y, f"{idx + 1}.", q_font, bold=True)
             for line_index, line in enumerate(q_lines):
-                draw_hindi_text(c, x + 13, y - line_index * q_lh, line, q_font, bold=True)
+                draw_text_auto(c, x + 13, y - line_index * q_lh, line, q_font, bold=True)
             y -= len(q_lines) * q_lh + 1
 
             a_x = x
@@ -887,7 +963,7 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
             for _ in range(35):
                 q_lines = wrap_text(q_text, col_width - 15, q_font, True)
                 option_lines = [
-                    wrap_text(options[j], option_width - 14, o_font, False)
+                    wrap_text(options[j], option_width - 14, o_font, True)
                     for j in range(4)
                 ]
                 q_lh = q_font * 1.05
@@ -917,9 +993,9 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
                 )
 
             y = top_y - 1
-            draw_hindi_text(c, x, y, f"{idx + 1}.", q_font, bold=True)
+            draw_text_auto(c, x, y, f"{idx + 1}.", q_font, bold=True)
             for line_index, line in enumerate(q_lines):
-                draw_hindi_text(c, x + 11, y - line_index * q_lh, line, q_font, bold=True)
+                draw_text_auto(c, x + 11, y - line_index * q_lh, line, q_font, bold=True)
             y -= len(q_lines) * q_lh + 1.2
 
             a_x = x
@@ -954,7 +1030,7 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
         details_y = 182
         details_max_width = 78
 
-    draw_hindi_text(
+    draw_text_auto(
         c, details_x, details_title_y, "TEST DETAILS",
         details_title_size, bold=True
     )
@@ -974,7 +1050,7 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
         line_font = details_font_size
         while line_font > 3.8 and measure_text(text_line, line_font, False) > details_max_width:
             line_font = max(3.8, line_font - 0.2)
-        draw_hindi_text(c, details_x, details_y, text_line, line_font, bold=False)
+        draw_text_auto(c, details_x, details_y, text_line, line_font, bold=False)
         details_y -= details_gap
 
     qr = qrcode.QRCode(
@@ -1072,7 +1148,7 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
         option_label_baseline = 1.5
         answer_title_size = 7.3
 
-    draw_hindi_text(
+    draw_text_auto(
         c, answer_title_x, answer_title_y,
         "ANSWER STRIP (Mark One Option Only)",
         answer_title_size, bold=True
@@ -1101,6 +1177,7 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
     c.save()
     buffer.seek(0)
     return buffer.getvalue()
+
 
 
 
