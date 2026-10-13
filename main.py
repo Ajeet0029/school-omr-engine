@@ -2756,3 +2756,108 @@ if __name__ == "__main__":
         port=port
     )
 
+
+
+
+
+
+
+
+
+
+from fastapi.responses import Response
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
+@app.get("/download-result-pdf")
+async def download_result_pdf(assignment_id: str):
+    # 1. Supabase से उस assignment का पूरा रिज़ल्ट निकालना
+    res = supabase.table("test_evaluations") \
+        .select("*") \
+        .eq("assignment_id", assignment_id) \
+        .order("roll_no") \
+        .execute()
+
+    evaluations = res.data
+    if not evaluations:
+        raise HTTPException(status_code=404, detail="इस असाइनमेंट का कोई डेटा नहीं मिला।")
+
+    # 2. PDF बफ़र तैयार करना
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=30,
+        leftMargin=30,
+        topMargin=30,
+        bottomMargin=30
+    )
+
+    styles = getSampleStyleSheet()
+    elements = []
+
+    # टेस्ट हेडर जानकारी
+    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=18, alignment=1, spaceAfter=8)
+    sub_style = ParagraphStyle('SubStyle', parent=styles['Normal'], fontSize=11, alignment=1, textColor=colors.HexColor("#555555"))
+
+    elements.append(Paragraph("<b>OMR TEST EVALUATION REPORT</b>", title_style))
+    elements.append(Paragraph(f"Assignment ID: {assignment_id} | Total Students: {len(evaluations)}", sub_style))
+    elements.append(Spacer(1, 15))
+
+    # 3. टेबल डेटा तैयार करना
+    # हेडर रो
+    table_data = [
+        ["Roll No", "Total Qs", "Correct", "Wrong", "Not Attempted", "Score", "Zone"]
+    ]
+
+    for row in evaluations:
+        roll = str(row.get("roll_no", "-"))
+        total_q = row.get("total_marks", 20)
+        score = row.get("score", 0)  # सही उत्तर
+        raw_ans = row.get("raw_answers") or {}
+
+        # गणना: attempted, unattempted, wrong
+        attempted_count = sum(1 for ans in raw_ans.values() if ans is not None)
+        unattempted = total_q - attempted_count
+        wrong = attempted_count - score if attempted_count >= score else 0
+        zone = str(row.get("zone", "-")).upper()
+
+        table_data.append([
+            roll,
+            str(total_q),
+            str(score),
+            str(wrong),
+            str(unattempted),
+            f"{score}/{total_q}",
+            zone
+        ])
+
+    # 4. टेबल स्टाइलिंग
+    t = Table(table_data, colWidths=[60, 65, 65, 65, 85, 65, 65])
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#BDC3C7")),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.HexColor("#F8F9FA"), colors.white]),
+        ('FONTSIZE', (0, 1), (-1, -1), 9),
+        ('TOPPADDING', (0, 1), (-1, -1), 6),
+        ('BOTTOMPADDING', (0, 1), (-1, -1), 6),
+    ]))
+
+    elements.append(t)
+    doc.build(elements)
+    buffer.seek(0)
+
+    # सीधे डाउनलोड करने योग्य PDF रिस्पॉन्स
+    return Response(
+        content=buffer.getvalue(),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=result_{assignment_id}.pdf"}
+    )
+
