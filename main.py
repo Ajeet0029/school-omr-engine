@@ -2765,6 +2765,10 @@ if __name__ == "__main__":
 
 
 
+# ==============================================================================
+# PDF Download Endpoint (Upload Session ID Based)
+# ==============================================================================
+import io
 from fastapi.responses import Response
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -2772,19 +2776,22 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 @app.get("/download-result-pdf")
-async def download_result_pdf(assignment_id: str):
-    # 1. Supabase से उस assignment का पूरा रिज़ल्ट निकालना
+async def download_result_pdf(session_id: str, file_name: str = None):
+    # 1. Supabase से upload_session_id के अनुसार सभी रिकॉर्ड निकालना
     res = supabase.table("test_evaluations") \
         .select("*") \
-        .eq("assignment_id", assignment_id) \
+        .eq("upload_session_id", session_id) \
         .order("roll_no") \
         .execute()
 
     evaluations = res.data
     if not evaluations:
-        raise HTTPException(status_code=404, detail="इस असाइनमेंट का कोई डेटा नहीं मिला।")
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Upload session '{session_id}' के लिए कोई रिज़ल्ट नहीं मिला।"
+        )
 
-    # 2. PDF बफ़र तैयार करना
+    # 2. PDF बफ़र और डॉक्यूमेंट सेटअप
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -2798,30 +2805,50 @@ async def download_result_pdf(assignment_id: str):
     styles = getSampleStyleSheet()
     elements = []
 
-    # टेस्ट हेडर जानकारी
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=18, alignment=1, spaceAfter=8)
-    sub_style = ParagraphStyle('SubStyle', parent=styles['Normal'], fontSize=11, alignment=1, textColor=colors.HexColor("#555555"))
+    # हेडर स्टाइल्स
+    title_style = ParagraphStyle(
+        'ReportTitle',
+        parent=styles['Heading1'],
+        fontSize=18,
+        leading=22,
+        alignment=1,
+        textColor=colors.HexColor("#1A252C"),
+        spaceAfter=6
+    )
+    sub_style = ParagraphStyle(
+        'ReportSubtitle',
+        parent=styles['Normal'],
+        fontSize=10,
+        leading=14,
+        alignment=1,
+        textColor=colors.HexColor("#5A6578"),
+        spaceAfter=15
+    )
 
-    elements.append(Paragraph("<b>OMR TEST EVALUATION REPORT</b>", title_style))
-    elements.append(Paragraph(f"Assignment ID: {assignment_id} | Total Students: {len(evaluations)}", sub_style))
-    elements.append(Spacer(1, 15))
+    # हेडर टेक्स्ट
+    test_type = evaluations[0].get("test_type", "Regular").capitalize()
+    elements.append(Paragraph("<b>CLASS OMR EVALUATION REPORT</b>", title_style))
+    elements.append(Paragraph(
+        f"Test Type: {test_type} | Session ID: {session_id} | Total Students: {len(evaluations)}", 
+        sub_style
+    ))
+    elements.append(Spacer(1, 10))
 
     # 3. टेबल डेटा तैयार करना
-    # हेडर रो
     table_data = [
         ["Roll No", "Total Qs", "Correct", "Wrong", "Not Attempted", "Score", "Zone"]
     ]
 
     for row in evaluations:
         roll = str(row.get("roll_no", "-"))
-        total_q = row.get("total_marks", 20)
-        score = row.get("score", 0)  # सही उत्तर
+        total_q = row.get("total_marks") or 20
+        score = row.get("score") or 0
         raw_ans = row.get("raw_answers") or {}
 
-        # गणना: attempted, unattempted, wrong
+        # गणना: attempted, wrong, unattempted
         attempted_count = sum(1 for ans in raw_ans.values() if ans is not None)
-        unattempted = total_q - attempted_count
-        wrong = attempted_count - score if attempted_count >= score else 0
+        unattempted = max(0, total_q - attempted_count)
+        wrong = max(0, attempted_count - score)
         zone = str(row.get("zone", "-")).upper()
 
         table_data.append([
@@ -2834,17 +2861,18 @@ async def download_result_pdf(assignment_id: str):
             zone
         ])
 
-    # 4. टेबल स्टाइलिंग
+    # 4. टेबल डिज़ाइन और स्टाइलिंग
     t = Table(table_data, colWidths=[60, 65, 65, 65, 85, 65, 65])
     t.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1E293B")),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
         ('FONTSIZE', (0, 0), (-1, 0), 10),
         ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#BDC3C7")),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.HexColor("#F8F9FA"), colors.white]),
+        ('TOPPADDING', (0, 0), (-1, 0), 8),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.HexColor("#F8FAFC"), colors.white]),
         ('FONTSIZE', (0, 1), (-1, -1), 9),
         ('TOPPADDING', (0, 1), (-1, -1), 6),
         ('BOTTOMPADDING', (0, 1), (-1, -1), 6),
@@ -2854,10 +2882,17 @@ async def download_result_pdf(assignment_id: str):
     doc.build(elements)
     buffer.seek(0)
 
-    # सीधे डाउनलोड करने योग्य PDF रिस्पॉन्स
+    # 5. फ़ाइल नाम तय करना
+    if file_name:
+        clean_name = file_name.replace(".pdf", "").replace(".PDF", "")
+        download_title = f"Result_{clean_name}.pdf"
+    else:
+        short_id = session_id[:8] if len(session_id) >= 8 else session_id
+        download_title = f"Class_Result_{short_id}.pdf"
+
     return Response(
         content=buffer.getvalue(),
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=result_{assignment_id}.pdf"}
+        headers={"Content-Disposition": f"attachment; filename={download_title}"}
     )
 
