@@ -2610,6 +2610,8 @@ async def generate_omr_pdf(
 async def scan_omr_endpoint(request: Request):
     try:
         data = await request.json()
+        upload_session_id = payload.get("upload_session_id") or str(uuid.uuid4())
+
         payload = data.get("data", data) if isinstance(data, dict) else {}
 
         # FlutterFlow से आने वाला image_url
@@ -2657,7 +2659,8 @@ async def scan_omr_endpoint(request: Request):
                 "total_marks": total_marks,
                 "zone": zone,
                 "raw_answers": student_answers,
-                "roll_no": page_idx + 1
+                "roll_no": page_idx + 1,
+                "upload_session_id": upload_session_id 
             }
 
              # 2. डुप्लीकेट चेक करना
@@ -2702,6 +2705,7 @@ async def scan_omr_endpoint(request: Request):
         return {
             "success": True,
             "total_processed": total_pages,
+            "upload_session_id": upload_session_id,
             "data": all_evaluations
         }
 
