@@ -924,7 +924,7 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
         col1_x = 42
         col2_x = width / 2.0 + 7
         col_width = width / 2.0 - 49
-        option_gap = 8
+        option_gap = 5
         option_width = (col_width - option_gap) / 2.0
         question_font = 8.5 if total_q <= 10 else 6.8
         option_font = 7.0 if total_q <= 10 else 5.5
@@ -939,7 +939,10 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
             q_font, o_font = question_font, option_font
 
             for _ in range(25):
-                q_lines = wrap_text(q_text, col_width - 15, q_font, True)
+                question_number = f"{idx + 1}."
+                number_width = measure_text(question_number, q_font, True)
+                question_text_offset = max(13.0, number_width + 3.0)
+                q_lines = wrap_text(q_text, col_width - question_text_offset, q_font, True)
                 option_lines = [
                     wrap_text(options[j], option_width - 14, o_font, True)
                     for j in range(4)
@@ -956,9 +959,12 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
                 o_font = max(4.4, o_font - 0.12)
 
             y = top_y - 2
-            draw_text_auto(c, x, y, f"{idx + 1}.", q_font, bold=True)
+            question_number = f"{idx + 1}."
+            number_width = measure_text(question_number, q_font, True)
+            question_text_offset = max(13.0, number_width + 3.0)
+            draw_text_auto(c, x, y, question_number, q_font, bold=True)
             for line_index, line in enumerate(q_lines):
-                draw_text_auto(c, x + 13, y - line_index * q_lh, line, q_font, bold=True)
+                draw_text_auto(c, x + question_text_offset, y - line_index * q_lh, line, q_font, bold=True)
             y -= len(q_lines) * q_lh + 1
 
             a_x = x
@@ -980,7 +986,7 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
         # Keep the 30-question layout unchanged. For 40 questions, reduce
         # horizontal separation between option columns and use that room for
         # larger text; vertical spacing between A/B and C/D is increased below.
-        option_gap = 10 if total_q == 30 else 5
+        option_gap = 5
         option_width = (col_width - option_gap) / 2.0
         # Larger starting fonts for 40 questions; each question auto-fits to
         # its available row height so short items print larger than long ones.
@@ -988,7 +994,11 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
         base_option_font = 6.8 if total_q == 30 else 6.8
         min_question_font = 4.6
         min_option_font = 4.1
-        row_height = available_height / float(max(column_counts))
+        if total_q == 40:
+            # Slightly tighter vertical pitch reduces the large blank gap between questions.
+            row_height = available_height / float(max(column_counts) + 0.8)
+        else:
+            row_height = available_height / float(max(column_counts))
 
         for idx in range(total_q):
             if idx < column_counts[0]:
@@ -1003,7 +1013,10 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
             q_font, o_font = base_question_font, base_option_font
 
             for _ in range(35):
-                q_lines = wrap_text(q_text, col_width - 13, q_font, True)
+                question_number = f"{idx + 1}."
+                number_width = measure_text(question_number, q_font, True)
+                question_text_offset = max(10.0, number_width + 3.0)
+                q_lines = wrap_text(q_text, col_width - question_text_offset, q_font, True)
                 option_lines = [
                     wrap_text(options[j], option_width - 12, o_font, True)
                     for j in range(4)
@@ -1036,9 +1049,12 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
                 )
 
             y = top_y - 1
-            draw_text_auto(c, x, y, f"{idx + 1}.", q_font, bold=True)
+            question_number = f"{idx + 1}."
+            number_width = measure_text(question_number, q_font, True)
+            question_text_offset = max(10.0, number_width + 3.0)
+            draw_text_auto(c, x, y, question_number, q_font, bold=True)
             for line_index, line in enumerate(q_lines):
-                draw_text_auto(c, x + 10, y - line_index * q_lh, line, q_font, bold=True)
+                draw_text_auto(c, x + question_text_offset, y - line_index * q_lh, line, q_font, bold=True)
             # Minimize the gap after the question before its A/B options.
             y -= len(q_lines) * q_lh + 0.1
 
@@ -1156,7 +1172,7 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
         answer_columns = 4
         questions_per_answer_column = 10
         answer_start_y = strip_y - 30
-        answer_row_pitch = 8.0
+        answer_row_pitch = 8.5
         bubble_radius = 3.6
         option_x_start = 17.0
         option_x_gap = 12.0
@@ -1171,7 +1187,7 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
         answer_columns = 2
         questions_per_answer_column = 5
         answer_start_y = 172
-        answer_row_pitch = 21.0
+        answer_row_pitch = 22.0
         bubble_radius = 5.5
         option_x_start = 25.0
         option_x_gap = 18.0
@@ -1186,7 +1202,7 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
         answer_columns = 4
         questions_per_answer_column = 5
         answer_start_y = 172
-        answer_row_pitch = 21.0
+        answer_row_pitch = 22.0
         bubble_radius = 4.2
         option_x_start = 20.0
         option_x_gap = 15.0
@@ -1224,6 +1240,8 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
     c.save()
     buffer.seek(0)
     return buffer.getvalue()
+
+
 
 
 
