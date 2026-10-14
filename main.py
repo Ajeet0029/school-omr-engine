@@ -728,7 +728,7 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
     # ------------------------------------------------------------------
     # BASIC DATA (unchanged)
     # ------------------------------------------------------------------
-    school_name = str(payload.get("school_name", "SCHOOL ASSESSMENT TEST"))
+    school_name = "OMR SCAN TEST"
     class_name = str(payload.get("class_name", ""))
     section = str(payload.get("section", ""))
     subject = str(payload.get("subject", ""))
@@ -805,85 +805,116 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
     qr_data = assignment_id.strip()
 
     # ------------------------------------------------------------------
-    # COMPACT HEADER (only header geometry/content layout changed)
-    # Left: school name, then class/section/subject.
-    # Right: student name line, then roll-number boxes.
-    # All header text uses the same draw_text_auto() renderer as the body.
+    # HEADER
+    # 10/20-question layout is preserved except for doubled roll boxes.
+    # 40-question layout is compact: no instruction line; name and roll
+    # boxes share the school-name row; left/top margins are narrower.
     # ------------------------------------------------------------------
     is_40_block = total_q > 20
     strip_y = 142 if is_40_block else 205
 
-    header_school_y = height - 30
-    header_meta_y = height - 43
-    divider_y = height - 72
-    instruction_y = height - 66
+    if is_40_block:
+        left_x = 36
+        header_school_y = height - 32
+        header_meta_y = height - 44
+        divider_y = height - 53
+        school_font = 10.5
+        meta_font = 6.4
 
-    left_x = 42
-    right_x = width - 205
-    left_max_width = right_x - left_x - 14
+        # Fixed school name occupies the left; all right-side fields share
+        # the same baseline as the school name.
+        draw_text_auto(c, left_x, header_school_y, school_name, school_font, bold=True)
 
-    # Keep the school name on one readable line by shrinking only as needed.
-    school_font = 12.0 if not is_40_block else 10.5
-    min_school_font = 7.0
-    while school_font > min_school_font and measure_text(school_name, school_font, True) > left_max_width:
-        school_font = max(min_school_font, school_font - 0.25)
-    if measure_text(school_name, school_font, True) > left_max_width:
-        school_name_lines = wrap_text(school_name, left_max_width, school_font, True)
-        school_name = school_name_lines[0]
+        header_meta = []
+        if class_name:
+            header_meta.append(f"कक्षा: {class_name}")
+        if section:
+            header_meta.append(f"सेक्शन: {section}")
+        if subject:
+            header_meta.append(f"विषय: {subject}")
+        meta_text = "  |  ".join(header_meta)
+        draw_text_auto(c, left_x, header_meta_y, meta_text, meta_font, bold=False)
 
-    draw_text_auto(c, left_x, header_school_y, school_name, school_font, bold=True)
+        # NAME line and ROLL NO boxes are on the school-name row.
+        header_label_y = header_school_y
+        draw_text_auto(c, 260, header_label_y, "नाम:", 6.4, bold=True)
+        c.setLineWidth(0.65)
+        c.line(284, header_label_y - 1, 350, header_label_y - 1)
+        draw_text_auto(c, 357, header_label_y, "रोल नंबर:", 6.4, bold=True)
 
-    header_meta = []
-    if class_name:
-        header_meta.append(f"कक्षा: {class_name}")
-    if section:
-        header_meta.append(f"सेक्शन: {section}")
-    if subject:
-        header_meta.append(f"विषय: {subject}")
-    meta_text = "  |  ".join(header_meta)
-    meta_font = 7.2 if not is_40_block else 6.4
-    while meta_font > 5.0 and measure_text(meta_text, meta_font, False) > left_max_width:
-        meta_font = max(5.0, meta_font - 0.2)
-    draw_text_auto(c, left_x, header_meta_y, meta_text, meta_font, bold=False)
-
-    # Right-side student name, above the roll-number boxes.
-    right_width = width - 40 - right_x
-    label_font = 7.2 if not is_40_block else 6.4
-    draw_text_auto(c, right_x, header_school_y, "नाम:", label_font, bold=True)
-    name_line_start = right_x + 25
-    c.setLineWidth(0.65 if is_40_block else 0.7)
-    c.line(name_line_start, header_school_y - 1, width - 40, header_school_y - 1)
-
-    roll_label_y = height - 47
-    draw_text_auto(c, right_x, roll_label_y, "रोल नंबर:", label_font, bold=True)
-    box_size = 8.0 if is_40_block else 9.0
-    box_gap = 2.0 if is_40_block else 2.5
-    box_start_x = right_x + 48
-    box_y = roll_label_y + (label_font * 0.35) - (box_size / 2.0)
-    max_box_right = width - 40
-    for b in range(4):
-        bx = box_start_x + b * (box_size + box_gap)
-        if bx + box_size <= max_box_right:
+        box_size = 16.0
+        box_gap = 2.0
+        box_start_x = 410
+        box_y = header_label_y - (box_size * 0.70)
+        for b in range(4):
+            bx = box_start_x + b * (box_size + box_gap)
             c.rect(bx, box_y, box_size, box_size, fill=0, stroke=1)
 
-    # Keep the existing instruction, rendered with the same Hindi font helper.
-    instruction = "निर्देश: सभी प्रश्नों के उत्तर नीचे दी गई ओएमआर पट्टी में नीले/काले पेन से गोला भरकर दें।"
-    instruction_font = 6.8 if not is_40_block else 5.9
-    instruction_max_width = width - 84
-    while instruction_font > 5.0 and measure_text(instruction, instruction_font, False) > instruction_max_width:
-        instruction_font = max(5.0, instruction_font - 0.2)
-    draw_text_auto(c, left_x, instruction_y, instruction, instruction_font, bold=False)
+        # Instructions are intentionally omitted only for the 40-question PDF.
+    else:
+        header_school_y = height - 30
+        header_meta_y = height - 43
+        divider_y = height - 72
+        instruction_y = height - 66
+        left_x = 42
+        right_x = width - 205
+        left_max_width = right_x - left_x - 14
+
+        school_font = 12.0
+        min_school_font = 7.0
+        while school_font > min_school_font and measure_text(school_name, school_font, True) > left_max_width:
+            school_font = max(min_school_font, school_font - 0.25)
+        draw_text_auto(c, left_x, header_school_y, school_name, school_font, bold=True)
+
+        header_meta = []
+        if class_name:
+            header_meta.append(f"कक्षा: {class_name}")
+        if section:
+            header_meta.append(f"सेक्शन: {section}")
+        if subject:
+            header_meta.append(f"विषय: {subject}")
+        meta_text = "  |  ".join(header_meta)
+        meta_font = 7.2
+        while meta_font > 5.0 and measure_text(meta_text, meta_font, False) > left_max_width:
+            meta_font = max(5.0, meta_font - 0.2)
+        draw_text_auto(c, left_x, header_meta_y, meta_text, meta_font, bold=False)
+
+        right_width = width - 40 - right_x
+        label_font = 7.2
+        draw_text_auto(c, right_x, header_school_y, "नाम:", label_font, bold=True)
+        name_line_start = right_x + 25
+        c.setLineWidth(0.7)
+        c.line(name_line_start, header_school_y - 1, width - 40, header_school_y - 1)
+
+        roll_label_y = height - 47
+        draw_text_auto(c, right_x, roll_label_y, "रोल नंबर:", label_font, bold=True)
+        # Exactly double the previous header box size (9 -> 18 points).
+        box_size = 18.0
+        box_gap = 2.5
+        box_start_x = right_x + 48
+        box_y = roll_label_y + (label_font * 0.35) - (box_size / 2.0)
+        for b in range(4):
+            bx = box_start_x + b * (box_size + box_gap)
+            if bx + box_size <= width - 40:
+                c.rect(bx, box_y, box_size, box_size, fill=0, stroke=1)
+
+        instruction = "निर्देश: सभी प्रश्नों के उत्तर नीचे दी गई ओएमआर पट्टी में नीले/काले पेन से गोला भरकर दें।"
+        instruction_font = 6.8
+        instruction_max_width = width - 84
+        while instruction_font > 5.0 and measure_text(instruction, instruction_font, False) > instruction_max_width:
+            instruction_font = max(5.0, instruction_font - 0.2)
+        draw_text_auto(c, left_x, instruction_y, instruction, instruction_font, bold=False)
 
     # ------------------------------------------------------------------
-    # HEADER DIVIDER (position preserved)
+    # HEADER DIVIDER
     # ------------------------------------------------------------------
     c.setLineWidth(0.8)
-    c.line(40, divider_y, width - 40, divider_y)
+    c.line(30 if is_40_block else 40, divider_y, width - 30 if is_40_block else width - 40, divider_y)
 
     # ------------------------------------------------------------------
     # QUESTION AREA (same original layouts and auto-fit rules)
     # ------------------------------------------------------------------
-    question_top = height - (78 if is_40_block else 84)
+    question_top = height - (61 if is_40_block else 84)
     question_bottom = strip_y + 5
     available_height = question_top - question_bottom
 
@@ -895,8 +926,8 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
         col_width = width / 2.0 - 49
         option_gap = 8
         option_width = (col_width - option_gap) / 2.0
-        question_font = 8.0 if total_q <= 10 else 6.5
-        option_font = 6.7 if total_q <= 10 else 5.2
+        question_font = 8.5 if total_q <= 10 else 6.8
+        option_font = 7.0 if total_q <= 10 else 5.5
 
         for idx in range(total_q):
             if idx < rows:
@@ -940,52 +971,60 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
             draw_option("D", options[3], b_x, y2, option_width, o_font, o_lh)
 
     else:
-        rows = 20
-        row_height = available_height / rows
-        col1_x, col2_x = 40, 302
-        col_width = 248
-        option_gap = 7
+        # 40-question layout: three vertical question columns.
+        # Column 1 contains Q1-Q14; column 2 Q15-Q27; column 3 Q28-Q40.
+        # All other layout sections remain unchanged.
+        column_counts = (14, 13, 13)
+        col1_x, col2_x, col3_x = 25, 209, 393
+        col_width = 177
+        option_gap = 6
         option_width = (col_width - option_gap) / 2.0
-        base_question_font = 6.0
-        base_option_font = 5.0
-        min_question_font = 4.8
-        min_option_font = 4.2
+        # Slightly larger starting sizes. Each question/options pair is fitted
+        # independently, so short content stays larger and long content shrinks.
+        base_question_font = 6.4
+        base_option_font = 5.4
+        min_question_font = 4.6
+        min_option_font = 4.1
+        row_height = available_height / 14.0
 
         for idx in range(total_q):
-            if idx < 20:
+            if idx < column_counts[0]:
                 x, row = col1_x, idx
+            elif idx < column_counts[0] + column_counts[1]:
+                x, row = col2_x, idx - column_counts[0]
             else:
-                x, row = col2_x, idx - 20
+                x, row = col3_x, idx - column_counts[0] - column_counts[1]
+
             top_y = question_top - row * row_height
             q_text, options = get_question(idx)
             q_font, o_font = base_question_font, base_option_font
 
             for _ in range(35):
-                q_lines = wrap_text(q_text, col_width - 15, q_font, True)
+                q_lines = wrap_text(q_text, col_width - 13, q_font, True)
                 option_lines = [
-                    wrap_text(options[j], option_width - 14, o_font, True)
+                    wrap_text(options[j], option_width - 12, o_font, True)
                     for j in range(4)
                 ]
-                q_lh = q_font * 1.05
-                o_lh = o_font * 1.05
+                # Tighter line spacing gives more room to the glyphs without
+                # letting one question collide with the next row.
+                q_lh = q_font * 0.96
+                o_lh = o_font * 0.96
                 q_height = len(q_lines) * q_lh
                 ab_height = max(len(option_lines[0]), len(option_lines[1])) * o_lh
                 cd_height = max(len(option_lines[2]), len(option_lines[3])) * o_lh
-                required_height = q_height + ab_height + cd_height + 4
-                if required_height <= row_height - 2:
+                required_height = q_height + ab_height + cd_height + 2.8
+                if required_height <= row_height - 1.5:
                     break
                 q_font = max(min_question_font, q_font - 0.10)
                 o_font = max(min_option_font, o_font - 0.08)
 
-            # Recalculate the final vertical demand after auto-fit. If extremely
-            # long text cannot fit at a readable font size, fail explicitly
-            # rather than silently overlap text or produce an unreadable OMR.
-            q_lh = q_font * 1.0
-            o_lh = o_font * 1.0
+            # Recalculate final vertical demand after auto-fit to avoid overlap.
+            q_lh = q_font * 0.96
+            o_lh = o_font * 0.96
             final_q_height = len(q_lines) * q_lh
             final_ab_height = max(len(option_lines[0]), len(option_lines[1])) * o_lh
             final_cd_height = max(len(option_lines[2]), len(option_lines[3])) * o_lh
-            if final_q_height + final_ab_height + final_cd_height + 2.5 > row_height:
+            if final_q_height + final_ab_height + final_cd_height + 2.0 > row_height:
                 raise ValueError(
                     f"Question {idx + 1} or its options are too long for the readable "
                     "40-question single-page layout. Shorten this question/options or "
@@ -995,15 +1034,17 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
             y = top_y - 1
             draw_text_auto(c, x, y, f"{idx + 1}.", q_font, bold=True)
             for line_index, line in enumerate(q_lines):
-                draw_text_auto(c, x + 11, y - line_index * q_lh, line, q_font, bold=True)
-            y -= len(q_lines) * q_lh + 1.2
+                draw_text_auto(c, x + 10, y - line_index * q_lh, line, q_font, bold=True)
+            # Reduce the gap after the question before its A/B options.
+            y -= len(q_lines) * q_lh + 0.5
 
             a_x = x
             b_x = x + option_width + option_gap
             draw_option("A", options[0], a_x, y, option_width, o_font, o_lh)
             draw_option("B", options[1], b_x, y, option_width, o_font, o_lh)
             ab_lines = max(len(option_lines[0]), len(option_lines[1]))
-            y2 = y - ab_lines * o_lh - 1
+            # Tighter A/B to C/D spacing; row boundaries remain unchanged.
+            y2 = y - ab_lines * o_lh - 0.4
             draw_option("C", options[2], a_x, y2, option_width, o_font, o_lh)
             draw_option("D", options[3], b_x, y2, option_width, o_font, o_lh)
 
@@ -1177,6 +1218,7 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
     c.save()
     buffer.seek(0)
     return buffer.getvalue()
+
 
 
 
