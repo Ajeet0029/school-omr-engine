@@ -977,13 +977,15 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
         column_counts = (10, 10, 10) if total_q == 30 else (14, 13, 13)
         col1_x, col2_x, col3_x = 25, 209, 393
         col_width = 177
-        # Slightly increase the gap between A/C and B/D option columns.
-        option_gap = 10
+        # Keep the 30-question layout unchanged. For 40 questions, reduce
+        # horizontal separation between option columns and use that room for
+        # larger text; vertical spacing between A/B and C/D is increased below.
+        option_gap = 10 if total_q == 30 else 5
         option_width = (col_width - option_gap) / 2.0
-        # Dynamic starting sizes: 30-question sheets have more vertical room;
-        # 40-question sheets start larger than before. Each item auto-fits.
-        base_question_font = 8.2 if total_q == 30 else 7.6
-        base_option_font = 6.8 if total_q == 30 else 6.3
+        # Larger starting fonts for 40 questions; each question auto-fits to
+        # its available row height so short items print larger than long ones.
+        base_question_font = 8.2 if total_q == 30 else 8.2
+        base_option_font = 6.8 if total_q == 30 else 6.8
         min_question_font = 4.6
         min_option_font = 4.1
         row_height = available_height / float(max(column_counts))
@@ -1013,7 +1015,8 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
                 q_height = len(q_lines) * q_lh
                 ab_height = max(len(option_lines[0]), len(option_lines[1])) * o_lh
                 cd_height = max(len(option_lines[2]), len(option_lines[3])) * o_lh
-                required_height = q_height + ab_height + cd_height + 2.8
+                option_row_gap = 1.8 if total_q == 40 else 0.1
+                required_height = q_height + ab_height + cd_height + 2.8 + option_row_gap
                 if required_height <= row_height - 1.5:
                     break
                 q_font = max(min_question_font, q_font - 0.10)
@@ -1044,9 +1047,10 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
             draw_option("A", options[0], a_x, y, option_width, o_font, o_lh)
             draw_option("B", options[1], b_x, y, option_width, o_font, o_lh)
             ab_lines = max(len(option_lines[0]), len(option_lines[1]))
-            # Keep vertical A/B to C/D spacing tight; horizontal option-column
-            # separation is slightly wider via option_gap above.
-            y2 = y - ab_lines * o_lh - 0.1
+            # For 40-question sheets, add a little vertical separation between
+            # A/B and C/D while narrowing the horizontal option-column gap.
+            option_row_gap = 1.8 if total_q == 40 else 0.1
+            y2 = y - ab_lines * o_lh - option_row_gap
             draw_option("C", options[2], a_x, y2, option_width, o_font, o_lh)
             draw_option("D", options[3], b_x, y2, option_width, o_font, o_lh)
 
@@ -1220,6 +1224,8 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
     c.save()
     buffer.seek(0)
     return buffer.getvalue()
+
+
 
 
 
