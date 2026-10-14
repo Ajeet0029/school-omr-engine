@@ -971,23 +971,22 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
             draw_option("D", options[3], b_x, y2, option_width, o_font, o_lh)
 
     else:
-        # 40-question layout: three vertical question columns.
-        # Column 1 contains Q1-Q14; column 2 Q15-Q27; column 3 Q28-Q40.
-        # All other layout sections remain unchanged.
-        column_counts = (14, 13, 13)
+        # 30/40-question layout: three vertical question columns.
+        # 30 questions: 10 per column. 40 questions: 14/13/13 per column.
+        # Everything outside this question-area block remains unchanged.
+        column_counts = (10, 10, 10) if total_q == 30 else (14, 13, 13)
         col1_x, col2_x, col3_x = 25, 209, 393
         col_width = 177
-        option_gap = 6
+        # Slightly increase the gap between A/C and B/D option columns.
+        option_gap = 10
         option_width = (col_width - option_gap) / 2.0
-        # Slightly larger starting sizes. Each question/options pair is fitted
-        # independently, so short content stays larger and long content shrinks.
-        # Increase the default font sizes so short questions/options use more
-        # of the available row height. Long content is still auto-fitted below.
-        base_question_font = 7.1
-        base_option_font = 5.9
+        # Dynamic starting sizes: 30-question sheets have more vertical room;
+        # 40-question sheets start larger than before. Each item auto-fits.
+        base_question_font = 8.2 if total_q == 30 else 7.6
+        base_option_font = 6.8 if total_q == 30 else 6.3
         min_question_font = 4.6
         min_option_font = 4.1
-        row_height = available_height / 14.0
+        row_height = available_height / float(max(column_counts))
 
         for idx in range(total_q):
             if idx < column_counts[0]:
@@ -1009,8 +1008,8 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
                 ]
                 # Tighter line spacing gives more room to the glyphs without
                 # letting one question collide with the next row.
-                q_lh = q_font * 0.94
-                o_lh = o_font * 0.94
+                q_lh = q_font * 0.92
+                o_lh = o_font * 0.92
                 q_height = len(q_lines) * q_lh
                 ab_height = max(len(option_lines[0]), len(option_lines[1])) * o_lh
                 cd_height = max(len(option_lines[2]), len(option_lines[3])) * o_lh
@@ -1021,8 +1020,8 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
                 o_font = max(min_option_font, o_font - 0.08)
 
             # Recalculate final vertical demand after auto-fit to avoid overlap.
-            q_lh = q_font * 0.94
-            o_lh = o_font * 0.94
+            q_lh = q_font * 0.92
+            o_lh = o_font * 0.92
             final_q_height = len(q_lines) * q_lh
             final_ab_height = max(len(option_lines[0]), len(option_lines[1])) * o_lh
             final_cd_height = max(len(option_lines[2]), len(option_lines[3])) * o_lh
@@ -1037,16 +1036,17 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
             draw_text_auto(c, x, y, f"{idx + 1}.", q_font, bold=True)
             for line_index, line in enumerate(q_lines):
                 draw_text_auto(c, x + 10, y - line_index * q_lh, line, q_font, bold=True)
-            # Reduce the gap after the question before its A/B options.
-            y -= len(q_lines) * q_lh + 0.25
+            # Minimize the gap after the question before its A/B options.
+            y -= len(q_lines) * q_lh + 0.1
 
             a_x = x
             b_x = x + option_width + option_gap
             draw_option("A", options[0], a_x, y, option_width, o_font, o_lh)
             draw_option("B", options[1], b_x, y, option_width, o_font, o_lh)
             ab_lines = max(len(option_lines[0]), len(option_lines[1]))
-            # Tighter A/B to C/D spacing; row boundaries remain unchanged.
-            y2 = y - ab_lines * o_lh - 0.2
+            # Keep vertical A/B to C/D spacing tight; horizontal option-column
+            # separation is slightly wider via option_gap above.
+            y2 = y - ab_lines * o_lh - 0.1
             draw_option("C", options[2], a_x, y2, option_width, o_font, o_lh)
             draw_option("D", options[3], b_x, y2, option_width, o_font, o_lh)
 
@@ -1220,6 +1220,8 @@ def generate_hybrid_omr_pdf(payload: dict) -> bytes:
     c.save()
     buffer.seek(0)
     return buffer.getvalue()
+
+
 
 
 
