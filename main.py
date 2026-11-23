@@ -1585,13 +1585,11 @@ async def generate_omr_pdf(
 
             download_url = upload_to_supabase(pdf_bytes, file_name)
 
-        storage_path = f"generated_omrs/{file_name}"
 
         return {
             "success": True,
             "download_url": download_url,
-            "file_name": file_name,
-            "storage_path": storage_path
+            "file_name": file_name
         }
 
         # ==================== MODE 2: OMR मूल्यांकन (1 से 100 पन्ने ऑटो रीड) ====================
