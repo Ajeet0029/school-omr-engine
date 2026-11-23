@@ -1583,11 +1583,11 @@ async def generate_omr_pdf(
             unique_token = str(uuid.uuid4())[:8]
             file_name = f"OMR_Exam_{today_date}_{unique_token}.pdf"
 
-           download_url = upload_to_supabase(pdf_bytes, file_name)
+            download_url = upload_to_supabase(pdf_bytes, file_name)
 
-        storage_path = f"generated_omrs/{file_name}"
+            storage_path = f"generated_omrs/{file_name}"
 
-        return {
+            return {
             "success": True,
             "download_url": download_url,
             "file_name": file_name,
